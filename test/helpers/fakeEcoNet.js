@@ -70,6 +70,9 @@ export function fakeEcoNet() {
       const token = `token-${server.issued}`;
       server.tokens.add(token);
       const auth = read('user_auth');
+      if (server.displayUnit) {
+        auth.options.temperature_display_unit = server.displayUnit;
+      }
       return answer(200, { ...auth, user_token: token });
     }
     if (!server.tokens.has(headers['ClearBlade-UserToken'])) {

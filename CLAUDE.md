@@ -63,8 +63,14 @@ test/helpers/       fake EcoNet cloud and MQTT broker
   `<device>:<key>` with the keys of `FEATURES` (constants.js). The select
   option values (`heating`, `fan-only`, `emergency-heat`…, `auto`/`on`) are
   frozen too: scenes store them.
-- Manifest keys are frozen: `email`, `password`, `language`,
-  `test_connection`.
+- Manifest keys are frozen: `email`, `password`, `max_water_setpoint`,
+  `language`, `test_connection`. Gladys 5.2 minimum (`publishEnergyConsumption`).
+- **Scalding**: no water setpoint above `max_water_setpoint` (120 °F by
+  default, bounded by the unit limits, see `waterSetpointCap` in devices.js)
+  may ever be sent, whatever the caller; it is also the `max` of the feature.
+  Never raise the default: the user does it on purpose (legionella, 140 °F).
+  `test/devices.test.js`, `test/app.test.js` and `test/manifest.test.js`
+  hold it.
 - Value conventions: the Gladys side uses the core enums of
   `server/utils/constants.js` (WATER_HEATER_MODE, THERMOSTAT_MODE,
   THERMOSTAT_OPERATING_STATE, AC_FAN_SPEED), copied in constants.js; units only
@@ -73,10 +79,14 @@ test/helpers/       fake EcoNet cloud and MQTT broker
   `MEDLO`…). Convert in devices.js only.
 - **Never sign in more than needed**: a refused password is never retried
   automatically; a refused token gets one new login, at most one every
-  5 minutes; the test button is the only extra login.
+  5 minutes, doubled while EcoNet refuses fresh tokens (up to 6 h); a broker
+  refusing a fresh token never triggers a login; a 429 blocks every request;
+  the test button is the only extra login.
 - Commands only go through MQTT: when the live link is down, a command fails
-  with a clear message, it is never queued. The shut-off valve is never
-  commanded.
+  with a clear message, it is never queued. One at a time per equipment,
+  refused for an offline equipment or a state older than 45 min, confirmed
+  by `reported` only. The shut-off valve is never commanded. Setpoints are
+  refused when the account may not be in °F.
 - Container limits: read-only rootfs, only `/data` writable (unused: the token
   stays in memory). Gladys: 300 states/min (the publisher keeps 250).
 - Never log or put in a status message the password, the user token, the

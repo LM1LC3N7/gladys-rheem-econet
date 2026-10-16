@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULTS, LANGUAGES } from '../src/config.js';
+import { DEFAULTS, LANGUAGES, MAX_WATER_SETPOINT } from '../src/config.js';
 import { ACTIONS } from '../src/constants.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -35,6 +35,7 @@ test('the store basics', () => {
   assert.equal(manifest.type, 'device');
   assert.ok(manifest.name.length >= 3 && manifest.name.length <= 30);
   assert.match(manifest.gladys_version, /^>=\d+\.\d+\.\d+$/);
+  assert.match(manifest.gladys_version, />=5\.2\.0/, 'publishEnergyConsumption needs Gladys 5.2');
   assert.equal(manifest.docker_image, `ghcr.io/lm1lc3n7/gladys-rheem-econet:${manifest.version}`);
   assert.equal(manifest.version, JSON.parse(read('package.json')).version);
   assert.equal(manifest.version, JSON.parse(read('package-lock.json')).version);
@@ -47,6 +48,8 @@ test('the store basics', () => {
     assert.ok(docs.length >= 300, `docs/${lang}.md is too short for the store`);
     assert.match(docs, /not\s+affiliated\s+with\s+Rheem|sans\s+lien\s+avec\s+Rheem/i);
     assert.match(docs, /never\s+tested\s+on\s+a\s+real|jamais\s+testé\s+sur\s+un\s+vrai/i);
+    assert.match(docs, /Gladys 5\.2/);
+    assert.match(docs, /legionella|légionelle/i);
   }
 });
 
@@ -94,6 +97,13 @@ test('the configuration matches the code', () => {
   assert.equal(fields.email.type, 'string');
   assert.equal(fields.password.type, 'secret', 'the password is never sent back to the browser');
   assert.equal(fields.email.required && fields.password.required, true);
+  // The anti-scald cap: a number, 120 °F by default, legionella explained.
+  const cap = fields.max_water_setpoint;
+  assert.equal(cap.type, 'number');
+  assert.equal(cap.default, 120);
+  assert.deepEqual([cap.min, cap.max], [MAX_WATER_SETPOINT.min, MAX_WATER_SETPOINT.max]);
+  assert.match(cap.description.en, /scald.*legionella/s);
+  assert.match(cap.description.fr, /brûlures.*légionelle/s);
   const intro = fields.intro;
   assert.equal(intro.type, 'section');
   for (const lang of ['en', 'fr']) {

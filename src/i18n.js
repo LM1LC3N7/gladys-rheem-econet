@@ -151,6 +151,18 @@ export const T = {
     en: `Connected: ${count} equipment(s), but the live updates are down (states read every 5 min, commands unavailable). Next attempt in ${wait(ms).en}.`,
     fr: `Connecté : ${count} équipement(s), mais les mises à jour en direct sont coupées (états lus toutes les 5 min, commandes indisponibles). Nouvel essai dans ${wait(ms).fr}.`,
   }),
+  liveRefused: (count, ms) => ({
+    en: `Connected: ${count} equipment(s), but the EcoNet broker refuses the live updates (states read every 5 min, commands unavailable). Next attempt in ${wait(ms).en}.`,
+    fr: `Connecté : ${count} équipement(s), mais le serveur EcoNet refuse les mises à jour en direct (états lus toutes les 5 min, commandes indisponibles). Nouvel essai dans ${wait(ms).fr}.`,
+  }),
+  tokenRefused: (count, ms) => ({
+    en: `${count} equipment(s): EcoNet refuses the tokens it has just issued. Next login in ${wait(ms).en} at the earliest.`,
+    fr: `${count} équipement(s) : EcoNet refuse les jetons qu'il vient d'émettre. Prochaine connexion dans ${wait(ms).fr} au plus tôt.`,
+  }),
+  notFahrenheit: {
+    en: 'EcoNet may not report this account in °F: the values are shown as °F, and the setpoints are refused. Set the EcoNet app to Fahrenheit.',
+    fr: "EcoNet ne remonte peut-être pas ce compte en °F : les valeurs sont affichées en °F et les consignes sont refusées. Réglez l'application EcoNet en Fahrenheit.",
+  },
   badge: {
     liveDown: {
       en: 'Live updates down: states every 5 min, commands unavailable',

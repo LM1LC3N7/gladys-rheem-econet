@@ -9,14 +9,12 @@
 //
 // MQTT.js (MIT) opens the connection with its own reconnection off: a new
 // connection may need a new user token (login), so the delays are handled
-// here. The user token is never logged.
+// here: 10 s doubled up to 5 min, ±25 % at random, the count starting again
+// only after 60 s of a stable link. The user token is never logged.
 // -----------------------------------------------------------------------------
 
 import mqtt from 'mqtt';
 import { ECONET, LIMITS, TIMINGS } from './constants.js';
-
-/** The longest wait between two connection attempts. */
-const RETRY_MAX = 5 * 60_000;
 
 /** Opens one MQTT connection (the only MQTT network access). */
 export function mqttConnect(options) {
@@ -32,15 +30,21 @@ export function clientIdOf(email, now) {
   return `${email}${String(now).replace('.', '').slice(0, 13)}_android`;
 }
 
+/** A delay spread by ±TIMINGS.jitter (`random` in 0..1). */
+export const jittered = (ms, random = Math.random) =>
+  Math.round(ms * (1 - TIMINGS.jitter + 2 * TIMINGS.jitter * random()));
+
 export class LiveLink {
   /**
    * @param {object} options
    * @param {() => Promise<{ userToken: string, accountId: string, email: string }>} options.session
    *   a valid session (logs in when needed)
-   * @param {(update: object) => void} options.onUpdate a message of an equipment
+   * @param {(update: object, topic: 'reported' | 'desired') => void} options.onUpdate
+   *   a message of an equipment
    * @param {() => void} [options.onChange] the link went up or down
    * @param {(err: Error) => void} [options.onRefused] the credentials were refused: no retry
-   * @param {(token: string) => void} [options.onTokenRefused] the broker refused the user token
+   * @param {(token: string) => number | void} [options.onTokenRefused] the broker refused
+   *   the user token; a number is the least wait before the next attempt
    */
   constructor({
     connect = mqttConnect,
@@ -52,6 +56,7 @@ export class LiveLink {
     logger,
     now = Date.now,
     timers = globalThis,
+    random = Math.random,
   }) {
     this.connectFn = connect;
     this.session = session;
@@ -62,14 +67,19 @@ export class LiveLink {
     this.logger = logger;
     this.now = now;
     this.timers = timers;
+    this.random = random;
     this.client = undefined;
     this.connected = false;
     this.accountId = undefined;
     this.failures = 0;
     this.timer = undefined;
+    this.stableTimer = undefined;
+    this.holdOff = 0;
     this.running = false;
     /** When the next attempt is due (ms), for the status message. */
     this.nextAttempt = undefined;
+    /** Commands sent by this process, for unique transaction ids. */
+    this.sent = 0;
   }
 
   get topics() {
@@ -81,7 +91,7 @@ export class LiveLink {
       return;
     }
     this.running = true;
-    this.open();
+    this.safeOpen();
   }
 
   stop() {
@@ -97,22 +107,36 @@ export class LiveLink {
     const { client } = this;
     this.client = undefined;
     this.connected = false;
+    this.clearStable();
     client?.removeAllListeners?.();
     // A late error of the closed client must not crash the process.
     client?.on?.('error', () => {});
     client?.end?.(true);
   }
 
-  /** The delay before the next attempt (10 s, doubled each time, 5 min at most). */
-  retryDelay() {
-    return Math.min(TIMINGS.retryMin * 2 ** Math.min(this.failures, 10), RETRY_MAX);
+  clearStable() {
+    if (this.stableTimer) {
+      this.timers.clearTimeout(this.stableTimer);
+      this.stableTimer = undefined;
+    }
   }
 
-  retry() {
+  /** The delay before the next attempt (10 s, doubled each time, 5 min at most, ±25 %). */
+  retryDelay() {
+    const base = Math.min(
+      TIMINGS.retryMin * 2 ** Math.min(this.failures, 10),
+      TIMINGS.liveRetryMax,
+    );
+    return jittered(base, this.random);
+  }
+
+  /** Plans the next attempt; `err.retryAfter` (a 429 pause) and a hold-off are waited for. */
+  retry(err) {
     if (!this.running) {
       return;
     }
-    const wait = this.retryDelay();
+    const wait = Math.max(this.retryDelay(), err?.retryAfter ?? 0, this.holdOff);
+    this.holdOff = 0;
     this.failures += 1;
     this.nextAttempt = this.now() + wait;
     if (this.timer) {
@@ -120,8 +144,20 @@ export class LiveLink {
     }
     this.timer = this.timers.setTimeout(() => {
       this.timer = undefined;
-      this.open();
+      this.safeOpen();
     }, wait);
+  }
+
+  /** open(), whose unexpected failures end in a retry rather than a dead link. */
+  safeOpen() {
+    this.open().catch((err) => {
+      this.logger?.warn?.(`EcoNet live events: ${String(err?.message ?? err).slice(0, 120)}`);
+      if (this.client) {
+        this.close();
+      }
+      this.retry(err);
+      this.onChange();
+    });
   }
 
   async open() {
@@ -141,7 +177,7 @@ export class LiveLink {
         return;
       }
       this.logger?.warn?.(`EcoNet live events: no session (${err?.message ?? err})`);
-      this.retry();
+      this.retry(err);
       this.onChange();
       return;
     }
@@ -173,8 +209,15 @@ export class LiveLink {
           return;
         }
         this.connected = true;
-        this.failures = 0;
         this.nextAttempt = undefined;
+        // The backoff starts again only once the link held for a while.
+        this.clearStable();
+        this.stableTimer = this.timers.setTimeout(() => {
+          this.stableTimer = undefined;
+          if (this.client === client && this.connected) {
+            this.failures = 0;
+          }
+        }, TIMINGS.liveStable);
         this.logger?.info?.('EcoNet live events connected');
         this.onChange();
       });
@@ -184,7 +227,10 @@ export class LiveLink {
       // MQTT.js errors carry no credentials; the token is never logged.
       this.logger?.warn?.(`EcoNet live events: ${String(err?.message ?? err).slice(0, 120)}`);
       if (authRefused(err)) {
-        this.onTokenRefused(token);
+        const wait = this.onTokenRefused(token);
+        if (Number.isFinite(wait)) {
+          this.holdOff = Math.max(this.holdOff, wait);
+        }
       }
     });
     client.on('close', () => {
@@ -194,6 +240,7 @@ export class LiveLink {
       const was = this.connected;
       this.client = undefined;
       this.connected = false;
+      this.clearStable();
       client.removeAllListeners();
       client.on('error', () => {});
       if (was) {
@@ -205,7 +252,8 @@ export class LiveLink {
   }
 
   message(topic, payload) {
-    if (!this.topics.includes(topic) || !payload || payload.length > LIMITS.messageBytes) {
+    const index = this.topics.indexOf(topic);
+    if (index < 0 || !payload || payload.length > LIMITS.messageBytes) {
       return;
     }
     let update;
@@ -219,10 +267,16 @@ export class LiveLink {
       return;
     }
     try {
-      this.onUpdate(update);
+      this.onUpdate(update, index === 0 ? 'reported' : 'desired');
     } catch (err) {
       this.logger?.warn?.(`EcoNet live update not handled: ${err.message}`);
     }
+  }
+
+  /** A transaction id like the app's (`ANDROID_<date>`), made unique: milliseconds + counter. */
+  transactionId() {
+    this.sent += 1;
+    return `ANDROID_${new Date(this.now()).toISOString().slice(0, 23)}_${this.sent}`;
   }
 
   /**
@@ -237,7 +291,7 @@ export class LiveLink {
       );
     }
     const body = JSON.stringify({
-      transactionId: `ANDROID_${new Date(this.now()).toISOString().slice(0, 19)}`,
+      transactionId: this.transactionId(),
       device_name: equipment.deviceName,
       serial_number: equipment.serial,
       ...payload,

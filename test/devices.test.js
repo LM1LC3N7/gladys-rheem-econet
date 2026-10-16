@@ -5,7 +5,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDevice, modeValues, payloadOf, statesOf, UnsupportedError } from '../src/devices.js';
+import {
+  buildDevice,
+  modeReport,
+  modeValues,
+  payloadOf,
+  statesOf,
+  UnsupportedError,
+  waterSetpointCap,
+} from '../src/devices.js';
 import { equipmentsOf } from '../src/equipment.js';
 import { IDS, locations } from './fixtures/econet.js';
 
@@ -42,7 +50,7 @@ const CORE_UNITS = {
   maintenance: { '*': ['percent'] },
   'energy-sensor': { '*': ['watt-hour', 'kilowatt-hour', 'megawatt-hour'] },
   'air-conditioning': { 'fan-speed': [null] },
-  switch: { binary: [null] },
+  'opening-sensor': { binary: [null] },
   text: { select: [null] },
   'counter-sensor': { '*': [null] },
 };
@@ -58,7 +66,7 @@ test('every feature uses a unit the core accepts for its category and type', () 
 });
 
 test('a heat pump water heater (gen4)', () => {
-  const device = buildDevice(gladys, bySerial(IDS.gen4), 'fr');
+  const device = buildDevice(gladys, bySerial(IDS.gen4), 'fr', { maxWaterSetpoint: 140 });
   assert.equal(device.external_id, 'ext:test:water-heater:q0320gen4');
   assert.equal(device.name, 'Water Heater');
   assert.equal(device.model, 'heatpumpWaterHeaterGen4');
@@ -129,7 +137,49 @@ test('a gen5 heat pump: hot water, health, valve not installed, vacation', () =>
   };
   const valve = feature(buildDevice(gladys, withValve, 'en'), 'shutoff-valve');
   assert.equal(valve.read_only, true);
-  assert.deepEqual(Object.fromEntries(statesOf(withValve))['shutoff-valve'], { state: 0 });
+  assert.deepEqual([valve.category, valve.type], ['opening-sensor', 'binary']);
+  // OPENING_SENSOR_STATE: 1 closed, 0 open.
+  assert.deepEqual(Object.fromEntries(statesOf(withValve))['shutoff-valve'], { state: 1 });
+  const open = {
+    ...equipment,
+    info: { ...equipment.info, '@VALVESTATUS': { title: 'Shut-OFF Valve - Open', value: 1 } },
+  };
+  assert.deepEqual(Object.fromEntries(statesOf(open))['shutoff-valve'], { state: 0 });
+  assert.throws(() => payloadOf(open, 'shutoff-valve', 1), /cannot be controlled/);
+});
+
+test('modes sharing a Gladys value: the first is offered, the other still shown', () => {
+  const equipment = bySerial(IDS.legacy);
+  const info = {
+    ...equipment.info,
+    '@MODE': {
+      constraints: { enumText: ['High Demand', 'Performance', 'Turbo'] },
+      status: 'Performance',
+      value: 1,
+    },
+  };
+  assert.deepEqual(
+    modeValues(info).map((m) => [m.mode, m.value]),
+    [
+      ['HIGH_DEMAND', 3],
+      ['OFF', 0],
+    ],
+  );
+  assert.deepEqual(modeReport(info), { discarded: ['PERFORMANCE'], unknown: ['Turbo'] });
+  assert.deepEqual(Object.fromEntries(statesOf({ ...equipment, info })).mode, { state: 3 });
+});
+
+test('the anti-scald cap of the water setpoint', () => {
+  const { info } = bySerial(IDS.gen4); // limits 110–140, scald warning at 121
+  assert.deepEqual(waterSetpointCap(info, 120), { min: 110, max: 120 });
+  assert.deepEqual(waterSetpointCap(info, undefined), { min: 110, max: 121 });
+  assert.deepEqual(waterSetpointCap(info, 160), { min: 110, max: 140 });
+  assert.deepEqual(waterSetpointCap(info, 100), { min: 110, max: 110 });
+  const noWarning = { ...info, '@SETPOINT': { constraints: { lowerLimit: 90, upperLimit: 150 } } };
+  assert.deepEqual(waterSetpointCap(noWarning, undefined), { min: 90, max: 120 });
+  // The feature offers the cap as its maximum.
+  const device = buildDevice(gladys, bySerial(IDS.gen4), 'en', { maxWaterSetpoint: 120 });
+  assert.equal(feature(device, 'target-temperature').max, 120);
 });
 
 test('a plain electric tank: Energy Saver is ECO, Performance is BOOST, off through @ENABLED', () => {
@@ -161,9 +211,30 @@ test('a gas water heater without modes: setpoint only', () => {
 
 test('water heater commands are checked against the unit', () => {
   const equipment = bySerial(IDS.gen4);
-  assert.deepEqual(payloadOf(equipment, 'target-temperature', 120.4), { '@SETPOINT': 120 });
-  assert.throws(() => payloadOf(equipment, 'target-temperature', 150), /between 110 and 140/);
-  assert.throws(() => payloadOf(equipment, 'target-temperature', 'hot'), /number/);
+  const cap = { maxWaterSetpoint: 120 };
+  assert.deepEqual(payloadOf(equipment, 'target-temperature', 120.4, cap), { '@SETPOINT': 120 });
+  // Above the anti-scald cap: refused, in English and French.
+  assert.throws(
+    () => payloadOf(equipment, 'target-temperature', 125, cap),
+    (err) =>
+      err instanceof UnsupportedError &&
+      /Scald risk: the water setpoint is limited to 120 °F/.test(err.message) &&
+      /Risque de brûlure/.test(err.message),
+  );
+  const raised = { maxWaterSetpoint: 185 };
+  assert.deepEqual(payloadOf(equipment, 'target-temperature', 140, raised), { '@SETPOINT': 140 });
+  assert.throws(() => payloadOf(equipment, 'target-temperature', 150, raised), /limited to 140/);
+  assert.throws(() => payloadOf(equipment, 'target-temperature', 100, cap), /between 110 and 140/);
+  assert.throws(() => payloadOf(equipment, 'target-temperature', 'hot', cap), /number/);
+  // An account that may not be in °F: every setpoint refused.
+  assert.throws(
+    () => payloadOf(equipment, 'target-temperature', 115, { ...cap, fahrenheit: false }),
+    /not report this account in °F/,
+  );
+  assert.throws(
+    () => payloadOf(bySerial(IDS.hvac), 'heat-setpoint', 66, { fahrenheit: false }),
+    /°F/,
+  );
   assert.deepEqual(payloadOf(equipment, 'mode', 2), { '@MODE': 2 });
   assert.throws(() => payloadOf(equipment, 'heating', 1), /cannot be controlled/);
   assert.throws(() => payloadOf(equipment, 'alerts', 0), /cannot be controlled/);

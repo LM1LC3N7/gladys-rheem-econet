@@ -8,7 +8,7 @@
   },
   "version": "0.1.0",
   "docker_image": "ghcr.io/lm1lc3n7/gladys-rheem-econet:0.1.0",
-  "gladys_version": ">=5.1.0",
+  "gladys_version": ">=5.2.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-rheem-econet/main/cover.png",
   "categories": ["climate", "energy"],
   "transports": ["cloud"],
@@ -55,6 +55,22 @@
         "fr": "Le mot de passe de l'application EcoNet. Un mot de passe refusé n'est jamais retenté tout seul : corrigez-le puis enregistrez, ou utilisez le bouton de test."
       },
       "required": true
+    },
+    {
+      "key": "max_water_setpoint",
+      "type": "number",
+      "label": {
+        "en": "Maximum water setpoint (°F)",
+        "fr": "Consigne maximale de l'eau (°F)"
+      },
+      "description": {
+        "en": "Anti-scald cap: Gladys refuses any water heater setpoint above it (the limits of the unit apply too). 120 °F (49 °C) by default. Raise it to 140 °F (60 °C) if you keep the tank hot against legionella, and fit a mixing valve then.",
+        "fr": "Protection contre les brûlures : Gladys refuse toute consigne de chauffe-eau au-dessus (les limites de l'appareil s'appliquent aussi). 120 °F (49 °C) par défaut. Relevez-la à 140 °F (60 °C) si vous gardez le ballon chaud contre la légionelle, avec alors un mitigeur."
+      },
+      "required": false,
+      "default": 120,
+      "min": 80,
+      "max": 185
     },
     {
       "key": "language",

@@ -189,6 +189,10 @@ export class EcoNetClient {
     this.loggingIn = undefined;
     this.queue = Promise.resolve();
     this.notBefore = 0;
+    /** Minimum time between a login and the next one, doubled while fresh tokens are refused. */
+    this.reloginSpacing = TIMINGS.reloginSpacing;
+    /** No request at all before this time (ms): EcoNet answered 429. */
+    this.blockedUntil = 0;
   }
 
   get userToken() {
@@ -199,11 +203,48 @@ export class EcoNetClient {
     return this.session?.accountId ?? null;
   }
 
-  /** Forgets the user token (refused by the MQTT broker): the next call logs in again. */
+  /** The temperature unit of the account ("Fahrenheit" in every example), or null. */
+  get displayUnit() {
+    return this.session?.displayUnit ?? null;
+  }
+
+  /** Whether the session is younger than the base login spacing (a refusal is then suspicious). */
+  isFresh(token) {
+    return (
+      Boolean(this.session) &&
+      (token === undefined || this.session.userToken === token) &&
+      this.now() - this.session.at < TIMINGS.reloginSpacing
+    );
+  }
+
+  /**
+   * Forgets a refused user token: the next call logs in again, once the login
+   * spacing is over. A token refused minutes after the login it came from
+   * doubles that spacing (5, 10, 20 min… 6 h at most): a new login would not
+   * fix it, and EcoNet must not see a loop of logins.
+   */
   invalidate(token) {
-    if (this.session && (token === undefined || this.session.userToken === token)) {
-      this.session = { ...this.session, stale: true };
+    if (!this.session || (token !== undefined && this.session.userToken !== token)) {
+      return;
     }
+    if (this.session.stale) {
+      return;
+    }
+    if (this.isFresh()) {
+      this.reloginSpacing = Math.min(this.reloginSpacing * 2, TIMINGS.reloginSpacingMax);
+      this.logger?.warn?.(
+        `EcoNet refused a token it has just issued: next login in ${Math.round(this.reloginSpacing / 60_000)} min`,
+      );
+    }
+    this.session = { ...this.session, stale: true };
+  }
+
+  /** The rate_limited error of a request made during a 429 pause. */
+  blockedError() {
+    return new EcoNetError('rate_limited', 'too many requests', {
+      status: 429,
+      retryAfter: Math.max(0, this.blockedUntil - this.now()),
+    });
   }
 
   headers(authenticated) {
@@ -235,13 +276,27 @@ export class EcoNetClient {
 
   /** One POST -> { status, json, headers }; never logs the headers nor the body. */
   async post(path, payload, authenticated) {
-    const answer = await this.paced(() =>
-      this.transport(this.baseUrl + path, {
+    if (this.now() < this.blockedUntil) {
+      throw this.blockedError();
+    }
+    const answer = await this.paced(() => {
+      // Checked again: the pause may have started while this request waited.
+      if (this.now() < this.blockedUntil) {
+        throw this.blockedError();
+      }
+      return this.transport(this.baseUrl + path, {
         method: 'POST',
         headers: this.headers(authenticated),
         body: JSON.stringify(payload),
-      }),
-    );
+      });
+    });
+    if (answer.status === 429) {
+      // Every request waits, the logins included: what EcoNet asks, 15 min at least.
+      const asked = retryAfterOf(answer.headers?.['retry-after'], this.now()) ?? 0;
+      this.blockedUntil = this.now() + Math.max(asked, TIMINGS.rateLimit);
+      this.logger?.debug?.(`EcoNet ${path.split('/').at(-1)} -> 429`);
+      throw this.blockedError();
+    }
     let json = null;
     if (answer.body) {
       try {
@@ -280,7 +335,13 @@ export class EcoNetClient {
     if (accountId === undefined || accountId === null || String(accountId) === '') {
       throw new EcoNetError('bad_response', 'EcoNet sent no account id');
     }
-    this.session = { userToken: json.user_token, accountId: String(accountId), at: this.now() };
+    const unit = options.temperature_display_unit;
+    this.session = {
+      userToken: json.user_token,
+      accountId: String(accountId),
+      at: this.now(),
+      displayUnit: typeof unit === 'string' && unit.trim() ? unit.trim().slice(0, 20) : null,
+    };
     this.logger?.info?.('Logged in to EcoNet');
   }
 
@@ -289,8 +350,8 @@ export class EcoNetClient {
     if (this.session && !this.session.stale) {
       return Promise.resolve();
     }
-    if (this.session?.stale && this.now() - this.session.at < TIMINGS.reloginSpacing) {
-      // Never a loop of logins: one every 5 minutes at most.
+    if (this.session?.stale && this.now() - this.session.at < this.reloginSpacing) {
+      // Never a loop of logins: one every 5 minutes at most (longer, see invalidate).
       return Promise.reject(new EcoNetError('unauthorized', 'user token refused'));
     }
     this.loggingIn ??= this.login().finally(() => {
@@ -322,6 +383,8 @@ export class EcoNetClient {
     if (!answer.json || typeof answer.json !== 'object') {
       throw new EcoNetError('bad_response', 'EcoNet sent an answer that is not JSON');
     }
+    // The token works: back to the base spacing of the logins.
+    this.reloginSpacing = TIMINGS.reloginSpacing;
     return answer.json;
   }
 
@@ -369,7 +432,7 @@ export class EcoNetClient {
 export function energyOf(json) {
   const report = json?.results?.energy_usage;
   const data = report?.data;
-  if (!Array.isArray(data)) {
+  if (!Array.isArray(data) || data.length === 0) {
     return null;
   }
   // "<p>You've used <b>5.72</b> kWh units of energy</p>": pyeconet reads the 4th word.

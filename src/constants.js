@@ -100,8 +100,25 @@ export const TIMINGS = {
   refreshDegraded: 5 * 60_000,
   /** Daily energy of the water heaters that report it. */
   energy: 6 * 60 * 60_000,
-  /** A refused user token is renewed by a new login at most this often. */
+  /** A refused user token is renewed by a new login at most this often… */
   reloginSpacing: 5 * 60_000,
+  /** …doubled while EcoNet refuses the tokens it has just issued, up to this. */
+  reloginSpacingMax: 6 * 3600_000,
+  /** The broker refuses a fresh token: the live link waits this long (doubled, up to 6 h). */
+  liveRefused: 30 * 60_000,
+  liveRefusedMax: 6 * 3600_000,
+  /** The live link counts as stable (its backoff starts again) after this long. */
+  liveStable: 60_000,
+  /** The longest wait between two MQTT connection attempts (outside a refusal). */
+  liveRetryMax: 5 * 60_000,
+  /** A catch-up reading after a reconnection, at most this often. */
+  catchUp: 5 * 60_000,
+  /** A command waits this long for the equipment to report the new value. */
+  commandConfirm: 30_000,
+  /** A command is refused when the state of the equipment is older than this. */
+  stateMaxAge: 45 * 60_000,
+  /** Random spread of the retry delays (±25 %). */
+  jitter: 0.25,
   /** Delays of the retries (API and live events): doubled each time, up to the max. */
   retryMin: 10_000,
   retryMax: 30 * 60_000,

@@ -7,24 +7,26 @@
 //   start ─► login ─► equipment list (getUserDataForApp) ─► devices + states
 //              └► live events: MQTT, user/<account>/device/reported|desired
 //   timers: full reading (30 min, 5 min while the live events are down),
-//   daily energy (6 h), retries with backoff. A refused password is never
-//   retried by itself.
+//   daily energy (6 h), retries with backoff and jitter. A refused password
+//   is never retried by itself; a 429 pauses every request.
 // -----------------------------------------------------------------------------
 
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig } from './config.js';
 import { FEATURES, LIMITS, TIMINGS } from './constants.js';
-import { buildDevice, hasEnergy, idsOf, payloadOf, statesOf } from './devices.js';
+import { buildDevice, hasEnergy, idsOf, modeReport, payloadOf, statesOf } from './devices.js';
 import { EcoNetClient, EcoNetError, errorReason } from './econet.js';
-import { equipmentsOf, mergeUpdate, nameOf } from './equipment.js';
+import { KINDS, equipmentsOf, mergeUpdate, nameOf, notFahrenheit } from './equipment.js';
 import { T } from './i18n.js';
-import { LiveLink } from './live.js';
+import { LiveLink, jittered } from './live.js';
 import { StatePublisher } from './publisher.js';
 
 const DAY = 24 * 3600_000;
 
 /** YYYY-MM-DD of a time (UTC). */
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
  * The days whose energy is published: the last LIMITS.energyDays elapsed ones.
@@ -34,6 +36,14 @@ const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 export function energyDays(now) {
   const base = now - 12 * 3600_000;
   return Array.from({ length: LIMITS.energyDays }, (_, i) => dayOf(base - (i + 1) * DAY));
+}
+
+/** Whether the equipment reports every value of a command payload. */
+export function confirms(info, payload) {
+  return Object.entries(payload).every(([key, wanted]) => {
+    const field = info[key];
+    return (isObject(field) ? field.value : field) === wanted;
+  });
 }
 
 export class EcoNetApp {
@@ -46,6 +56,7 @@ export class EcoNetApp {
     timers = globalThis,
     sleep,
     spacing,
+    random = Math.random,
   }) {
     this.gladys = gladys;
     this.logger = logger;
@@ -55,6 +66,7 @@ export class EcoNetApp {
     this.timers = timers;
     this.sleep = sleep;
     this.spacing = spacing;
+    this.random = random;
     this.publisher = new StatePublisher({ gladys, logger, now, timers });
     this.config = normalizeConfig();
     this.configKey = undefined;
@@ -62,7 +74,7 @@ export class EcoNetApp {
     this.generation = 0;
     this.client = null;
     this.live = null;
-    /** serial -> { equipment, ids } */
+    /** serial -> { equipment, ids, updatedAt, chain, waiters } */
     this.entries = new Map();
     /** feature external id -> { entry, key } */
     this.routes = new Map();
@@ -76,7 +88,25 @@ export class EcoNetApp {
     this.transports = new Map();
     /** `<serial>:<day>` -> kWh already published */
     this.energy = new Map();
-    this.skippedLogged = new Set();
+    /** Things logged once: unsupported types, unknown modes, the unit. */
+    this.logged = new Set();
+    this.resetRun();
+  }
+
+  /** The state of one run (one configuration). */
+  resetRun() {
+    this.liveWasDown = false;
+    this.lastRefreshAt = -Infinity;
+    this.liveRefusals = 0;
+    this.unitIssue = false;
+    this.commands = 0;
+  }
+
+  logOnce(key, level, message) {
+    if (!this.logged.has(key)) {
+      this.logged.add(key);
+      this.logger[level](message);
+    }
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -94,6 +124,7 @@ export class EcoNetApp {
       await this.resync();
       return;
     }
+    const blockedUntil = this.client?.blockedUntil ?? 0;
     this.stop();
     this.config = config;
     this.configKey = key;
@@ -104,6 +135,8 @@ export class EcoNetApp {
     }
     await this.setStatus(false, T.connecting);
     this.client = this.newClient();
+    // A 429 pause survives a restart with the same account.
+    this.client.blockedUntil = blockedUntil;
     this.live = this.newLive(this.client);
     this.publisher.start();
     await this.refresh(this.generation, { publish: true });
@@ -130,13 +163,14 @@ export class EcoNetApp {
         await client.ensureSession();
         return { userToken: client.userToken, accountId: client.accountId, email: client.email };
       },
-      onUpdate: (update) => current() && this.onUpdate(update),
+      onUpdate: (update, topic) => current() && this.onUpdate(update, topic),
       onChange: () => current() && this.liveChanged(),
       onRefused: (err) => current() && this.apiFailed(err),
-      onTokenRefused: (token) => client.invalidate(token),
+      onTokenRefused: (token) => (current() ? this.tokenRefused(client, token) : undefined),
       logger: this.logger,
       now: this.now,
       timers: this.timers,
+      random: this.random,
     });
   }
 
@@ -158,7 +192,7 @@ export class EcoNetApp {
     this.refused = false;
     this.backoff = 0;
     this.configKey = undefined;
-    this.liveWasDown = false;
+    this.resetRun();
   }
 
   /** Runs `fn` after `delay`, once per name, unless the app was restarted meanwhile. */
@@ -178,6 +212,11 @@ export class EcoNetApp {
     );
   }
 
+  cancel(name) {
+    this.timers.clearTimeout(this.scheduled.get(name));
+    this.scheduled.delete(name);
+  }
+
   async setStatus(connected, message) {
     const key = JSON.stringify([connected, message ?? null]);
     if (key === this.lastStatus) {
@@ -193,17 +232,28 @@ export class EcoNetApp {
     return Boolean(this.live?.connected);
   }
 
+  /** Milliseconds before the next attempt of the live link (0 when unknown). */
+  liveWait() {
+    return Math.max(0, (this.live?.nextAttempt ?? this.now()) - this.now());
+  }
+
   /** The status once EcoNet answered: the live events decide. */
   async reportStatus() {
+    const count = this.entries.size;
     if (this.refused) {
       await this.setStatus(false, T.refused);
-    } else if (this.entries.size === 0) {
+    } else if (this.unitIssue) {
+      await this.setStatus(true, T.notFahrenheit);
+    } else if (count === 0) {
       await this.setStatus(true, T.noEquipment);
     } else if (this.liveUp) {
-      await this.setStatus(true, T.connected(this.entries.size));
+      await this.setStatus(true, T.connected(count));
+    } else if (this.liveRefusals > 0) {
+      await this.setStatus(false, T.liveRefused(count, this.liveWait()));
+    } else if (this.client && this.client.reloginSpacing > TIMINGS.reloginSpacing) {
+      await this.setStatus(false, T.tokenRefused(count, this.client.reloginSpacing));
     } else {
-      const wait = Math.max(0, (this.live?.nextAttempt ?? this.now()) - this.now());
-      await this.setStatus(false, T.liveDown(this.entries.size, wait));
+      await this.setStatus(false, T.liveDown(count, this.liveWait()));
     }
   }
 
@@ -225,14 +275,13 @@ export class EcoNetApp {
     }
     this.apiOk = true;
     this.backoff = 0;
+    this.lastRefreshAt = this.now();
     const { equipments, skipped } = equipmentsOf(locations);
     for (const type of skipped) {
-      if (!this.skippedLogged.has(type)) {
-        this.skippedLogged.add(type);
-        this.logger.info(`EcoNet equipment not supported: ${type}`);
-      }
+      this.logOnce(`type:${type}`, 'info', `EcoNet equipment not supported: ${type}`);
     }
     this.setEquipments(equipments.slice(0, LIMITS.equipments));
+    this.checkUnit();
     await this.publishDevices({ force: publish });
     await this.publishAllStates();
     if (this.entries.size > 0) {
@@ -246,10 +295,33 @@ export class EcoNetApp {
     }
   }
 
+  /** The equipments of a reading; known ones keep their entry (commands, waiters). */
   setEquipments(equipments) {
     const entries = new Map();
     for (const equipment of equipments) {
-      entries.set(equipment.serial, { equipment, ids: idsOf(this.gladys, equipment) });
+      const known = this.entries.get(equipment.serial);
+      const entry = known ?? { chain: Promise.resolve(), waiters: new Set() };
+      entry.equipment = equipment;
+      entry.ids = idsOf(this.gladys, equipment);
+      entry.updatedAt = this.now();
+      entries.set(equipment.serial, entry);
+      if (equipment.kind === KINDS.WATER_HEATER) {
+        const { discarded, unknown } = modeReport(equipment.info);
+        for (const mode of discarded) {
+          this.logOnce(
+            `discarded:${equipment.serial}:${mode}`,
+            'info',
+            `"${nameOf(equipment)}": mode ${mode} shares its Gladys mode with another one: shown, not offered`,
+          );
+        }
+        for (const text of unknown) {
+          this.logOnce(
+            `unknown:${equipment.serial}:${text}`,
+            'warn',
+            `"${nameOf(equipment)}": unknown EcoNet mode "${text}" left out`,
+          );
+        }
+      }
     }
     if (this.entries.size === 0 && entries.size > 0) {
       this.logger.info(`EcoNet: ${entries.size} equipment(s) on the account`);
@@ -266,8 +338,25 @@ export class EcoNetApp {
     }
   }
 
+  /** °F is assumed everywhere: anything else is logged, shown, and setpoints are refused. */
+  checkUnit() {
+    const unit = this.client?.displayUnit;
+    const accountOther = typeof unit === 'string' && !/^f/i.test(unit);
+    const equipmentOther = [...this.entries.values()].some((e) => notFahrenheit(e.equipment.info));
+    this.unitIssue = accountOther || equipmentOther;
+    if (this.unitIssue) {
+      this.logOnce(
+        'unit',
+        'warn',
+        `EcoNet may not report °F (account unit: ${unit ?? 'unknown'}): setpoints are refused`,
+      );
+    }
+  }
+
   deviceOf(entry) {
-    return buildDevice(this.gladys, entry.equipment, this.config.language);
+    return buildDevice(this.gladys, entry.equipment, this.config.language, {
+      maxWaterSetpoint: this.config.maxWaterSetpoint,
+    });
   }
 
   scheduleRefresh() {
@@ -283,8 +372,7 @@ export class EcoNetApp {
       this.apiOk = false;
       this.live?.stop();
       for (const name of ['refresh', 'energy', 'api']) {
-        this.timers.clearTimeout(this.scheduled.get(name));
-        this.scheduled.delete(name);
+        this.cancel(name);
       }
       this.logger.warn('EcoNet refused the e-mail or the password');
       await this.setStatus(false, T.refused);
@@ -294,22 +382,22 @@ export class EcoNetApp {
     this.apiOk = false;
     let wait;
     if (err instanceof EcoNetError && err.kind === 'rate_limited') {
-      wait = Math.max(err.retryAfter ?? 0, TIMINGS.rateLimit);
+      // The client holds every request until the end of the pause (15 min at least).
+      wait = Math.max(err.retryAfter ?? TIMINGS.rateLimit, 1000);
       this.logger.warn(`EcoNet rate limit: next attempt in ${Math.round(wait / 1000)} s`);
       if (!this.liveUp) {
         await this.setStatus(false, T.rateLimited(wait));
       }
     } else {
       this.backoff = this.backoff ? Math.min(this.backoff * 2, TIMINGS.retryMax) : TIMINGS.retryMin;
-      wait = this.backoff;
+      wait = jittered(this.backoff, this.random);
       this.logger.warn(`EcoNet: ${errorReason(err)}`);
       if (!this.liveUp) {
         await this.setStatus(false, T.unreachable(errorReason(err), wait));
       }
     }
     if (retry) {
-      this.timers.clearTimeout(this.scheduled.get('refresh'));
-      this.scheduled.delete('refresh');
+      this.cancel('refresh');
       this.schedule('api', wait, retry);
     }
     await this.publishTransports();
@@ -317,31 +405,70 @@ export class EcoNetApp {
 
   // --- Live events -------------------------------------------------------------
 
-  /** A message of the broker: the fields that changed on one equipment. */
-  onUpdate(update) {
+  /**
+   * The broker refused a user token. A token EcoNet issued minutes ago is not
+   * expired: the live link is refused for good, a new login would not help;
+   * it waits 30 min, doubled up to 6 h. An older token is dropped (next
+   * login, spaced by the client).
+   * @returns {number | undefined} the least wait before the next attempt
+   */
+  tokenRefused(client, token) {
+    if (client.isFresh(token)) {
+      this.liveRefusals += 1;
+      const wait = Math.min(
+        TIMINGS.liveRefused * 2 ** (this.liveRefusals - 1),
+        TIMINGS.liveRefusedMax,
+      );
+      this.logger.warn(
+        `The EcoNet broker refuses a fresh token: live events retried in ${Math.round(wait / 60_000)} min`,
+      );
+      return wait;
+    }
+    client.invalidate(token);
+    return undefined;
+  }
+
+  /**
+   * A message of the broker. Only `reported` (what the equipment says)
+   * changes the state; `desired` is the echo of a command, not its result.
+   */
+  onUpdate(update, topic = 'reported') {
     const entry = this.entries.get(String(update.serial_number ?? ''));
     if (!entry || String(update.device_name ?? '') !== entry.equipment.deviceName) {
       this.logger.debug('EcoNet update of an unknown equipment ignored');
       return;
     }
-    const { info, changed } = mergeUpdate(entry.equipment.info, update);
-    if (!changed) {
+    if (topic !== 'reported') {
       return;
     }
-    entry.equipment = { ...entry.equipment, info };
-    this.pushStates(entry);
-    if ('@CONNECTED' in update) {
-      this.publishTransports().catch(() => {});
+    entry.updatedAt = this.now();
+    const { info, changed } = mergeUpdate(entry.equipment.info, update);
+    if (changed) {
+      entry.equipment = { ...entry.equipment, info };
+      this.pushStates(entry);
+      if ('@CONNECTED' in update) {
+        this.publishTransports().catch(() => {});
+      }
+    }
+    for (const waiter of [...entry.waiters]) {
+      if (confirms(entry.equipment.info, waiter.payload)) {
+        entry.waiters.delete(waiter);
+        this.cancel(waiter.name);
+      }
     }
   }
 
   async liveChanged() {
     const up = this.liveUp;
+    if (up) {
+      this.liveRefusals = 0;
+    }
     await this.reportStatus();
     await this.publishTransports();
     if (up && this.liveWasDown) {
-      // What changed while the live events were down.
-      this.schedule('refresh', 0, () => this.refresh());
+      // What changed while the live events were down: at most one catch-up every 5 min.
+      const due = Math.max(0, this.lastRefreshAt + TIMINGS.catchUp - this.now());
+      this.schedule('refresh', due, () => this.refresh());
     } else {
       this.scheduleRefresh();
     }
@@ -381,6 +508,12 @@ export class EcoNetApp {
           }
           if (err instanceof EcoNetError && err.kind === 'refused') {
             await this.apiFailed(err);
+            return;
+          }
+          if (err instanceof EcoNetError && err.kind === 'rate_limited') {
+            // No more requests during the pause: the next reading will do.
+            this.logger.warn('EcoNet rate limit: energy reading stopped');
+            this.scheduleEnergy();
             return;
           }
           this.logger.warn(`"${nameOf(entry.equipment)}": energy not read (${errorReason(err)})`);
@@ -437,7 +570,12 @@ export class EcoNetApp {
       return;
     }
     for (const [key, value] of statesOf(entry.equipment)) {
-      this.publisher.push(entry.ids.feature(key), value);
+      // Only the features of the device: a field a live update brings later
+      // (a unit unknown at the discovery) has no feature to receive it.
+      const id = entry.ids.feature(key);
+      if (this.routes.get(id)?.entry === entry) {
+        this.publisher.push(id, value);
+      }
     }
   }
 
@@ -538,19 +676,61 @@ export class EcoNetApp {
 
   // --- Commands ----------------------------------------------------------------------
 
-  async setValue(device, feature, value) {
+  /** One command at a time per equipment: the checks and the sending of the next wait. */
+  setValue(device, feature, value) {
     const route = this.routes.get(feature?.external_id);
     if (!route) {
-      throw new Error('unknown EcoNet feature: scan the equipments again');
+      return Promise.reject(new Error('unknown EcoNet feature: scan the equipments again'));
     }
+    const { entry, key } = route;
+    const run = entry.chain.catch(() => {}).then(() => this.command(entry, key, value));
+    entry.chain = run.catch(() => {});
+    return run;
+  }
+
+  async command(entry, key, value) {
     if (!this.liveUp) {
       throw new Error('the live link to EcoNet is down: commands are unavailable for now');
     }
-    const { entry, key } = route;
+    if (entry.equipment.info['@CONNECTED'] === false) {
+      throw new Error('EcoNet reports this equipment offline: command not sent');
+    }
+    if (this.now() - entry.updatedAt > TIMINGS.stateMaxAge) {
+      throw new Error('the state of this equipment is too old: command not sent, try again later');
+    }
     // An UnsupportedError carries the message Gladys shows for the failed command.
-    const payload = payloadOf(entry.equipment, key, value);
+    const payload = payloadOf(entry.equipment, key, value, {
+      maxWaterSetpoint: this.config.maxWaterSetpoint,
+      fahrenheit: !this.unitIssue,
+    });
     await this.live.publish(entry.equipment, payload);
-    this.logger.info(`"${nameOf(entry.equipment)}": ${key} set (${JSON.stringify(payload)})`);
+    this.logger.info(`"${nameOf(entry.equipment)}": ${key} sent (${JSON.stringify(payload)})`);
+    this.awaitConfirmation(entry, key, payload);
+  }
+
+  /**
+   * Waits (30 s) for the equipment to report the values sent. Not confirmed:
+   * logged, and the last reported state is published again, so Gladys does
+   * not keep showing a value the equipment never took.
+   */
+  awaitConfirmation(entry, key, payload) {
+    if (confirms(entry.equipment.info, payload)) {
+      return;
+    }
+    this.commands += 1;
+    const waiter = { payload, name: `confirm:${entry.equipment.serial}:${this.commands}` };
+    entry.waiters.add(waiter);
+    this.schedule(waiter.name, TIMINGS.commandConfirm, () => {
+      if (!entry.waiters.delete(waiter)) {
+        return;
+      }
+      this.logger.warn(
+        `"${nameOf(entry.equipment)}": ${key} not confirmed by the equipment within ${TIMINGS.commandConfirm / 1000} s`,
+      );
+      this.gladys.forgetPublishedStates(entry.ids.device);
+      this.publisher.forget(entry.ids.device);
+      this.pushStates(entry);
+    });
   }
 
   // --- Configuration screen button ---------------------------------------------------
@@ -561,6 +741,8 @@ export class EcoNetApp {
       return T.notConfigured;
     }
     const client = this.newClient();
+    // The 429 pause of the running client applies to the test too, and back.
+    client.blockedUntil = this.client?.blockedUntil ?? 0;
     try {
       const { equipments } = equipmentsOf(await client.locations());
       if (this.refused) {
@@ -574,7 +756,14 @@ export class EcoNetApp {
       if (err instanceof EcoNetError && err.kind === 'refused') {
         return T.test.refused;
       }
+      if (err instanceof EcoNetError && err.kind === 'rate_limited') {
+        return T.rateLimited(err.retryAfter ?? TIMINGS.rateLimit);
+      }
       return T.test.failed(errorReason(err));
+    } finally {
+      if (this.client) {
+        this.client.blockedUntil = Math.max(this.client.blockedUntil, client.blockedUntil);
+      }
     }
   }
 }

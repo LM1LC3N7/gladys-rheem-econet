@@ -103,13 +103,13 @@ export function mergeUpdate(info, update) {
     const current = next[key];
     let merged;
     if (isObject(value)) {
-      merged = { ...(isObject(current) ? current : {}), ...value };
-      if (key === '@MODE') {
-        merged = fixModeEnum(
-          merged,
-          current?.constraints?.enumText ?? merged.constraints?.enumText,
-        );
-      }
+      // pyeconet check_update_enum: the update alone is fixed (its own status,
+      // the enumText of the equipment), never with the status kept from before.
+      const fixed =
+        key === '@MODE'
+          ? fixModeEnum(value, value.constraints?.enumText ?? current?.constraints?.enumText)
+          : value;
+      merged = { ...(isObject(current) ? current : {}), ...fixed };
     } else if (isObject(current)) {
       if (current.value === undefined || current.value === null) {
         continue;
@@ -371,6 +371,25 @@ export function enumOptions(field, parse) {
     });
   }
   return options;
+}
+
+/**
+ * Whether the temperature fields declare a unit other than °F
+ * (`constraints.units`, "deg F" in every example); false when none says.
+ */
+export function notFahrenheit(info) {
+  return ['@SETPOINT', '@HEATSETPOINT', '@COOLSETPOINT'].some((key) => {
+    const units = info[key]?.constraints?.units;
+    return typeof units === 'string' && units.trim() !== '' && !/\bF\b|fahrenheit/i.test(units);
+  });
+}
+
+/** The texts of an enum field that `parse` does not know (logged once by the app). */
+export function unknownTexts(field, parse) {
+  const enumText = field?.constraints?.enumText;
+  return Array.isArray(enumText)
+    ? enumText.filter((text) => parse(text) === null).map((text) => clip(String(text).trim(), 40))
+    : [];
 }
 
 /** The current option of an enum field, or null. */

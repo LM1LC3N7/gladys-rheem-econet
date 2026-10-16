@@ -26,6 +26,13 @@ up to date at the end of every milestone.
       mode, EcoNet mode select, running state, fan speed, fan mode, alerts);
       badges; "Test the connection"; en/fr; docs en/fr; cover. Tested against
       pyeconet's example answers only.
+- [x] **Review fixes** (2026-10-17): anti-scald `max_water_setpoint`,
+      Gladys 5.2, fresh-token handling (login spacing doubled, live refusal
+      held back), 429 pause of every request, MQTT stable-link backoff and
+      jitter, catch-up spacing, commands serialized / checked / confirmed,
+      `reported` only, unique transaction ids, discarded and unknown modes,
+      °F check, update-only @MODE fix, empty energy report, valve as an
+      opening sensor, LiveLink.open() failures retried.
 - [ ] **Milestone 2 — real account**: run against a real account and compare
       with the app (see "To check"); turn the answers (anonymized) into
       fixtures.
@@ -46,11 +53,18 @@ up to date at the end of every milestone.
   answers once it expired (401 assumed).
 - The temperature unit: every example says `deg F` (pyeconet and Home
   Assistant assume °F). Does an account set to Celsius change the values?
+  (Today: `temperature_display_unit` other than Fahrenheit, or a
+  `constraints.units` other than °F, refuses the setpoints.)
 - MQTT: are the commands echoed on `desired` and then confirmed on
-  `reported`? (both are applied, as pyeconet does). Does the broker drop the
-  connection when the token expires?
-- The energy report: does `start_date`/`end_date` without a time zone mean
-  the local day of the unit? Is `data` hourly for one day? Gas units: kBTU.
+  `reported`? Only `reported` changes the state now (pyeconet applies both);
+  a value not reported within 30 s is logged and the last reported state is
+  published again. Does a reported update repeat the whole field or only the
+  value? Does the broker drop the connection when the token expires? Is the
+  unique `transactionId` (`ANDROID_<ISO ms>_<n>`) accepted?
+- The energy report (dates to check): does `start_date`/`end_date` without a
+  time zone mean the local day of the unit? Is "yesterday counted from 12 h
+  ago" the right day for the Gladys time zone? Is `data` hourly for one day
+  (an empty `data` is taken as no reading)? Gas units: kBTU.
 - `@RUNNINGSTATUS` texts of the thermostats (only "" in the examples):
   "heat"/"cool" are looked for.
 - `@FANMODE` texts (none in the examples): "Auto" / "On Continuous" assumed.
@@ -87,7 +101,9 @@ up to date at the end of every milestone.
   Only → ECO (the core: "heat-pump-only on a heat-pump appliance"); High
   Demand and Performance → BOOST; Electric and Gas → MANUAL; Vacation → AWAY.
   On/off is the OFF mode (no separate `binary`), as pyeconet's set_mode does
-  it (`@ENABLED` and `@MODE`).
+  it (`@ENABLED` and `@MODE`). A mode sharing a Gladys value with an earlier
+  one (High Demand and Performance) is not offered but still shown with that
+  value; discarded and unknown mode texts are logged once.
 - **Thermostat modes**: THERMOSTAT_MODE has no fan only nor emergency heat:
   the `mode` feature offers off/heating/cooling/auto and shows emergency heat
   as heating, fan only as off; the `system-mode` select carries every EcoNet
@@ -95,14 +111,44 @@ up to date at the end of every milestone.
   Max → TURBO) on the air-conditioning category: the core has no thermostat
   fan speed type.
 - **Shut-off valve read only**: the PIPELINE rule (valves off by default);
-  pyeconet itself does not command it.
+  pyeconet itself does not command it. Published as an opening sensor
+  (opening-sensor/binary, OPENING_SENSOR_STATE: 1 closed, 0 open): a sensor
+  category, never reachable by "turn everything off"; the water-valve
+  category has no open/closed type.
+- **Anti-scald cap `max_water_setpoint`** (review, blocking): a number in °F,
+  80–185, 120 by default (49 °C, the usual anti-scald value); without a
+  usable value, the scald warning the unit reports
+  (`@SETPOINT.constraints.warning[].value`), else 120; always kept within the
+  unit limits. It is the `max` of the setpoint feature, and any higher
+  setpoint is refused with an English + French message. The docs explain
+  legionella: raise it to 140 °F on purpose, with a mixing valve.
+- **Gladys 5.2** minimum: `publishEnergyConsumption`.
 - **Commands need the live link** (they are MQTT messages): refused with a
-  message while it is down. Setpoints checked against the unit limits, the
-  deadband kept in auto mode. No command is held back for a hot water
-  setpoint: the unit limits apply (docs warn about scalding).
+  message while it is down. Serialized per equipment (checks and sending);
+  refused when EcoNet reports the equipment offline or its state is older
+  than 45 min (a reading every 30 min, plus margin). Setpoints checked
+  against the unit limits, the deadband kept in auto mode. Only the
+  `reported` topic changes the state; a command not confirmed by `reported`
+  within 30 s is logged and the last reported state is published again (the
+  confirmation runs after the ack: Gladys awaits a command for a few seconds
+  only).
+- **°F check**: the account's `temperature_display_unit` and the
+  `constraints.units` of the temperature fields; anything but °F is logged
+  once, shown in the status, and every setpoint is refused.
 - **Login limits**: a refused password stops everything until the
   configuration changes or the test button succeeds; a refused token gets one
-  new login, at most one every 5 minutes, never a loop.
+  new login, at most one every 5 minutes; a token refused less than 5 minutes
+  after its login doubles that spacing (10, 20 min… 6 h), back to 5 min after
+  the first successful call, shown in the status. The broker refusing (CONNACK
+  4/5) a token younger than 5 minutes is a lasting refusal of the live link:
+  no new login, next attempt in 30 min (doubled up to 6 h); an older token is
+  dropped (next login, spaced as above).
+- **HTTP 429**: the client blocks every request, the login included, until
+  what Retry-After says (15 min at least) without touching the network; the
+  live link and the test button wait too, the energy reading stops.
+- **Retries**: REST backoff 10 s → 30 min and MQTT 10 s → 5 min, both ±25 % at
+  random; the MQTT count starts again only after 60 s of a stable link; one
+  catch-up reading after a reconnection at most every 5 minutes.
 - **Version 0.1.0 set by hand** in `package.json`, `package-lock.json` and the
   manifest (with the `docker_image` tag): the one-time exception to "versions
   belong to the Release workflow", the template's 1.0.0 and image name had to

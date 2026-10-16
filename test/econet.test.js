@@ -76,29 +76,79 @@ test('a refused user token: one new login and the call again, never a loop', asy
   await c.locations();
   assert.equal(server.logins().length, 2);
   assert.equal(server.requests.at(-1).headers['ClearBlade-UserToken'], 'token-2');
-  // The new token is refused at once: no third login before 5 minutes.
+  // The new token is refused at once: the login spacing doubles (10 min).
   server.tokens.clear();
   await assert.rejects(c.locations(), (err) => err.kind === 'unauthorized');
   await assert.rejects(c.locations(), (err) => err.kind === 'unauthorized');
   assert.equal(server.logins().length, 2);
+  assert.equal(c.reloginSpacing, 10 * 60_000);
   c.advance(TIMINGS.reloginSpacing);
-  await c.locations();
+  await assert.rejects(c.locations(), (err) => err.kind === 'unauthorized');
+  assert.equal(server.logins().length, 2, 'no login 5 minutes after a fresh token was refused');
+  c.advance(TIMINGS.reloginSpacing);
+  // The third token is refused too: 20 min.
+  server.queue.push({ match: (r) => r.path.endsWith('getUserDataForApp'), status: 401 });
+  await assert.rejects(c.locations(), (err) => err.kind === 'unauthorized');
   assert.equal(server.logins().length, 3);
+  assert.equal(c.reloginSpacing, 20 * 60_000);
+  // Then it works: back to 5 minutes after the first successful use.
+  c.advance(20 * 60_000);
+  await c.locations();
+  assert.equal(server.logins().length, 4);
+  assert.equal(c.reloginSpacing, TIMINGS.reloginSpacing);
+});
+
+test('the login spacing stops doubling at 6 hours', () => {
+  const c = client(fakeEcoNet());
+  for (let i = 0; i < 12; i += 1) {
+    c.session = { userToken: `t${i}`, accountId: '1', at: c.now() };
+    c.invalidate(`t${i}`);
+  }
+  assert.equal(c.reloginSpacing, TIMINGS.reloginSpacingMax);
+});
+
+test('a 429 pauses every request, the login included, without touching the network', async () => {
+  const server = fakeEcoNet();
+  const c = client(server);
+  await c.locations();
+  server.queue.push({
+    match: (r) => r.path.endsWith('getUserDataForApp'),
+    status: 429,
+    headers: { 'retry-after': '60' },
+  });
+  await assert.rejects(
+    c.locations(),
+    (err) => err.kind === 'rate_limited' && err.retryAfter === TIMINGS.rateLimit,
+    'what EcoNet asks, 15 min at least',
+  );
+  const sent = server.requests.length;
+  c.advance(5 * 60_000);
+  await assert.rejects(
+    c.locations(),
+    (err) => err.kind === 'rate_limited' && err.retryAfter === 10 * 60_000,
+  );
+  c.session = null;
+  await assert.rejects(c.locations(), (err) => err.kind === 'rate_limited', 'the login waits too');
+  assert.equal(server.requests.length, sent, 'nothing sent during the pause');
+  c.advance(10 * 60_000);
+  await c.locations();
+  assert.equal(server.requests.length, sent + 2);
+  // A longer Retry-After wins.
+  server.queue.push({
+    match: (r) => r.path.endsWith('/user/auth'),
+    status: 429,
+    headers: { 'retry-after': '3600' },
+  });
+  c.session = null;
+  await assert.rejects(
+    c.locations(),
+    (err) => err.kind === 'rate_limited' && err.retryAfter === 3_600_000,
+  );
 });
 
 test('errors: rate limit with Retry-After, outage, unreadable answers', async () => {
   const server = fakeEcoNet();
   const c = client(server);
-  server.queue.push({
-    match: (r) => r.path.endsWith('getUserDataForApp'),
-    status: 429,
-    body: {},
-    headers: { 'retry-after': '120' },
-  });
-  await assert.rejects(
-    c.locations(),
-    (err) => err.kind === 'rate_limited' && err.retryAfter === 120_000,
-  );
   server.queue.push({
     match: (r) => r.path.endsWith('getUserDataForApp'),
     status: 502,

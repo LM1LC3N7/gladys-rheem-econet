@@ -14,8 +14,13 @@ the notes of the version's GitHub Release.
 
 - Rheem and Ruud water heaters of the EcoNet cloud: mode (EcoNet modes mapped
   to the Gladys water heater modes), water setpoint (°F), hot water available,
-  heating, shut-off valve (read only), tank and compressor health, energy per
-  day (kWh), active alerts.
+  heating, shut-off valve (read-only opening sensor), tank and compressor
+  health, energy per day (kWh), active alerts.
+- Anti-scald cap: the "Maximum water setpoint" option (120 °F by default,
+  raise it to 140 °F against legionella) bounds every water setpoint.
+- Commands are checked (equipment online, recent state, limits), sent one at
+  a time per equipment, and confirmed by the equipment's report within 30 s;
+  otherwise the last reported value is shown again.
 - EcoNet thermostats and the zones of zoned systems: temperature, humidity,
   heating and cooling setpoints, mode, EcoNet mode (fan only and emergency
   heat included), running state, fan speed, fan mode, active alerts.
@@ -26,5 +31,15 @@ the notes of the version's GitHub Release.
   and English texts and documentation.
 - The EcoNet logic is ported from pyeconet (MIT): see
   `THIRD_PARTY_NOTICES.md`, shipped in the image with `LICENSE`.
+- Requires Gladys 5.2 or later (daily energy).
+
+### Security
+
+- A refused password is never retried by itself; a token refused minutes
+  after its login spaces the next logins out (5 min doubled up to 6 h); a
+  broker refusing a fresh token holds the live link back (30 min doubled up
+  to 6 h) without logging in again; an HTTP 429 pauses every request, the
+  login included (what EcoNet asks, 15 min at least).
+- Setpoints are refused when the account may not report °F.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/commits/main

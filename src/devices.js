@@ -6,12 +6,14 @@
 //   - `mode`                 water-heater/mode: WATER_HEATER_MODE, the modes
 //                            of the unit as supported_options (EcoNet names
 //                            as labels, see MODE_VALUES);
-//   - `target-temperature`   water-heater/target-temperature (°F, the limits
-//                            of the unit);
+//   - `target-temperature`   water-heater/target-temperature (°F, from the
+//                            minimum of the unit up to the anti-scald cap of
+//                            the configuration, `max_water_setpoint`);
 //   - `remaining-hot-water`  water-heater/remaining-hot-water (%: 0, 33, 66,
 //                            100, the tank icon of the app);
 //   - `heating`              water-heater/heating (0/1, @RUNNING);
-//   - `shutoff-valve`        switch/binary, READ ONLY (1 open), when a
+//   - `shutoff-valve`        opening-sensor/binary, READ ONLY
+//                            (OPENING_SENSOR_STATE: 1 closed, 0 open), when a
 //                            shut-off valve is installed: never commanded;
 //   - `tank-health`, `compressor-health`  maintenance/life-remaining (%);
 //   - `energy-daily`         energy-sensor/daily-consumption (kWh per day,
@@ -65,8 +67,10 @@ import {
   operatingStateOf,
   runningOf,
   thermostatModeOf,
+  unknownTexts,
   valveOf,
   waterHeaterMode,
+  waterHeaterModeOf,
   waterHeaterModePayload,
   waterHeaterModes,
 } from './equipment.js';
@@ -79,8 +83,38 @@ const fail = (message) => {
   throw new UnsupportedError(message);
 };
 
+/** The anti-scald default of `max_water_setpoint` (°F). */
+export const DEFAULT_MAX_WATER_SETPOINT = 120;
+
+/**
+ * The highest water setpoint Gladys may write: the `max_water_setpoint` of
+ * the configuration (else the scald warning the unit reports, else 120 °F),
+ * kept within the limits of the unit.
+ */
+export function waterSetpointCap(info, configured) {
+  const field = info['@SETPOINT'];
+  const limits = limitsOf(field) ?? { min: 90, max: 140 };
+  const warnings = (Array.isArray(field?.constraints?.warning) ? field.constraints.warning : [])
+    .map((w) => Number(w?.value))
+    .filter(Number.isFinite);
+  const wanted = Number.isFinite(configured)
+    ? configured
+    : warnings.length > 0
+      ? Math.min(...warnings)
+      : DEFAULT_MAX_WATER_SETPOINT;
+  return {
+    min: limits.min,
+    max: Math.max(limits.min, Math.min(limits.max, Math.round(wanted))),
+  };
+}
+
+/** Whether the heat pump flavour of the mode table applies. */
+const isHeatPump = (info) =>
+  waterHeaterModes(info).some((m) => m.mode === 'HEAT_PUMP_ONLY') ||
+  /heatpump/i.test(String(info['@TYPE']));
+
 /** EcoNet water heater mode -> Gladys WATER_HEATER_MODE (see modeValues). */
-function modeValueOf(mode, heatPump) {
+export function modeValueOf(mode, heatPump) {
   switch (mode) {
     case 'OFF':
       return WATER_HEATER_MODE.OFF;
@@ -105,17 +139,30 @@ function modeValueOf(mode, heatPump) {
 
 /** The modes of a water heater as [{ mode, value }], one EcoNet mode per Gladys value. */
 export function modeValues(info) {
-  const modes = waterHeaterModes(info);
-  const heatPump =
-    modes.some((m) => m.mode === 'HEAT_PUMP_ONLY') || /heatpump/i.test(String(info['@TYPE']));
+  const heatPump = isHeatPump(info);
   const values = [];
-  for (const { mode } of modes) {
+  for (const { mode } of waterHeaterModes(info)) {
     const value = modeValueOf(mode, heatPump);
     if (value !== null && !values.some((v) => v.value === value)) {
       values.push({ mode, value });
     }
   }
   return values;
+}
+
+/**
+ * What the mode feature leaves out, for a log: EcoNet modes sharing a Gladys
+ * value with an earlier one (not offered as commands, still shown), and mode
+ * texts pyeconet does not know.
+ */
+export function modeReport(info) {
+  const kept = modeValues(info).map((m) => m.mode);
+  return {
+    discarded: waterHeaterModes(info)
+      .map((m) => m.mode)
+      .filter((m) => !kept.includes(m)),
+    unknown: unknownTexts(info['@MODE'], waterHeaterModeOf),
+  };
 }
 
 /** Frozen option values of the selects. */
@@ -195,8 +242,9 @@ export const hasEnergy = (equipment) =>
  * @param {object} gladys the SDK client (external ids)
  * @param {{ serial: string, kind: string, info: object }} equipment
  * @param {'en' | 'fr'} language
+ * @param {{ maxWaterSetpoint?: number }} [options]
  */
-export function buildDevice(gladys, equipment, language) {
+export function buildDevice(gladys, equipment, language, { maxWaterSetpoint } = {}) {
   const { info } = equipment;
   const ids = idsOf(gladys, equipment);
   const t = texts(language);
@@ -230,7 +278,8 @@ export function buildDevice(gladys, equipment, language) {
       );
     }
     if (has(info, '@SETPOINT')) {
-      const limits = limitsOf(info['@SETPOINT']) ?? { min: 90, max: 140 };
+      // The anti-scald cap is the maximum Gladys offers.
+      const limits = waterSetpointCap(info, maxWaterSetpoint);
       features.push(
         named(
           FEATURES.SETPOINT,
@@ -270,7 +319,7 @@ export function buildDevice(gladys, equipment, language) {
       features.push(
         named(
           FEATURES.VALVE,
-          sensor({ category: C.SWITCH, type: TYPES.SWITCH.BINARY, min: 0, max: 1 }),
+          sensor({ category: C.OPENING_SENSOR, type: TYPES.SENSOR.BINARY, min: 0, max: 1 }),
         ),
       );
     }
@@ -464,12 +513,15 @@ export function statesOf(equipment) {
   const num = (n) => (n === null ? null : { state: n });
   if (equipment.kind === KINDS.WATER_HEATER) {
     const mode = waterHeaterMode(info);
-    add(FEATURES.MODE, num(modeValues(info).find((m) => m.mode === mode)?.value ?? null));
+    // Even a mode left out of the options (it shares its Gladys value) is shown.
+    add(FEATURES.MODE, num(mode ? modeValueOf(mode, isHeatPump(info)) : null));
     add(FEATURES.SETPOINT, num(numberOf(info['@SETPOINT'])));
     add(FEATURES.HOT_WATER, num(hotWaterOf(info)));
     add(FEATURES.HEATING, num(runningOf(info)));
     if (hasValve(info)) {
-      add(FEATURES.VALVE, num(valveOf(info)));
+      // OPENING_SENSOR_STATE: 0 open, 1 closed.
+      const open = valveOf(info);
+      add(FEATURES.VALVE, num(open === null ? null : open === 1 ? 0 : 1));
     }
     add(FEATURES.TANK_HEALTH, num(has(info, '@TANK') ? healthOf(info['@TANK']) : null));
     add(
@@ -520,12 +572,21 @@ function setpoint(field, value, what) {
 /**
  * The EcoNet payload of a Gladys command ({ "@SETPOINT": 120 }…), checked
  * against what the equipment reports now. Throws UnsupportedError with a
- * message for the user (in English, like every command error).
+ * message for the user (in English, like every command error; the
+ * anti-scald refusal is in English and French).
+ * @param {{ maxWaterSetpoint?: number, fahrenheit?: boolean }} [options]
+ *   fahrenheit: false when the account may not report °F (setpoints refused)
  */
-export function payloadOf(equipment, key, value) {
+export function payloadOf(equipment, key, value, { maxWaterSetpoint, fahrenheit = true } = {}) {
   const { info } = equipment;
   const text = String(value ?? '').trim();
   const n = Number(value);
+  const setpointKeys = [FEATURES.SETPOINT, FEATURES.HEAT_SETPOINT, FEATURES.COOL_SETPOINT];
+  if (!fahrenheit && setpointKeys.includes(key)) {
+    fail(
+      'EcoNet does not report this account in °F: setpoints are refused until the unit is checked (set the EcoNet app to Fahrenheit)',
+    );
+  }
   if (equipment.kind === KINDS.WATER_HEATER) {
     switch (key) {
       case FEATURES.MODE: {
@@ -536,8 +597,17 @@ export function payloadOf(equipment, key, value) {
         }
         return payload;
       }
-      case FEATURES.SETPOINT:
+      case FEATURES.SETPOINT: {
+        const wanted = Number(value);
+        const cap = waterSetpointCap(info, maxWaterSetpoint).max;
+        if (Number.isFinite(wanted) && Math.round(wanted) > cap) {
+          fail(
+            `Scald risk: the water setpoint is limited to ${cap} °F. Raise "Maximum water setpoint" in the configuration to go higher. / ` +
+              `Risque de brûlure : la consigne de l'eau est limitée à ${cap} °F. Relevez « Consigne maximale de l'eau » dans la configuration pour aller plus haut.`,
+          );
+        }
         return { '@SETPOINT': setpoint(info['@SETPOINT'], value, 'water setpoint') };
+      }
       default:
         return fail(`${key} cannot be controlled`);
     }

@@ -13,8 +13,9 @@ User documentation: [English](docs/en.md) · [Français](docs/fr.md).
 ## Features
 
 - **Water heaters**: mode (EcoNet modes mapped to the Gladys water heater
-  modes), water setpoint (°F), hot water available, heating, shut-off valve
-  (read only), tank and compressor health, energy per day (kWh), active
+  modes), water setpoint (°F, capped by the anti-scald `max_water_setpoint`,
+  120 °F by default), hot water available, heating, shut-off valve (read-only
+  opening sensor), tank and compressor health, energy per day (kWh), active
   alerts.
 - **Thermostats** (and each zone of a zoned system): temperature, humidity,
   heating and cooling setpoints (°F, deadband kept in auto), mode, every
@@ -22,6 +23,9 @@ User documentation: [English](docs/en.md) · [Français](docs/fr.md).
 - Live updates over the MQTT broker of the app, a full reading every 30 min
   (5 min while the live link is down), energy every 6 h, transport badges,
   a "Test the connection" button, French and English.
+- Commands checked (online, recent state, limits), one at a time per
+  equipment, confirmed by the equipment's report within 30 s.
+- Requires Gladys 5.2 or later (`publishEnergyConsumption`).
 
 ## Credits
 

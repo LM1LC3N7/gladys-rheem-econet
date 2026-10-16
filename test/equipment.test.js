@@ -13,6 +13,7 @@ import {
   hotWaterOf,
   mergeUpdate,
   nameOf,
+  notFahrenheit,
   operatingStateOf,
   runningOf,
   thermostatModeOf,
@@ -156,6 +157,15 @@ test('hot water, running, valve', () => {
   assert.equal(valveOf({ '@VALVESTATUS': { title: 'Shut-OFF Valve not installed' } }), null);
 });
 
+test('the temperature unit the fields declare', () => {
+  assert.equal(notFahrenheit(first('get_locations_water_heater').info), false, '"deg F"');
+  assert.equal(notFahrenheit(first('get_locations_hvac').info), false, 'no unit text');
+  assert.equal(
+    notFahrenheit({ '@SETPOINT': { constraints: { units: 'deg C' }, value: 50 } }),
+    true,
+  );
+});
+
 test('thermostat enums', () => {
   const hvac = first('get_locations_hvac').info;
   assert.equal(enumValue(hvac['@MODE'], thermostatModeOf), 'HEATING');
@@ -187,6 +197,10 @@ test('live updates merge like pyeconet update_equipment_info', () => {
   const c = mergeUpdate(b.info, update(IDS.gen4, { '@MODE': { status: 'HIGH DEMAND', value: 1 } }));
   assert.equal(c.info['@MODE'].value, 3);
   assert.deepEqual(c.info['@MODE'].constraints, info['@MODE'].constraints);
+  // An update without status keeps its value: the status kept from before does
+  // not override it (pyeconet fixes the update alone).
+  const fresh = mergeUpdate(c.info, update(IDS.gen4, { '@MODE': { value: 2 } }));
+  assert.equal(fresh.info['@MODE'].value, 2);
   // Confirmation dialogs are never applied nor accepted.
   assert.equal(mergeUpdate(c.info, { dialog: { message: 'x' }, '@AWAY': true }).changed, false);
   // Non-"@" keys are ignored.

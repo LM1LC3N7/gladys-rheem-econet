@@ -1,7 +1,8 @@
 # Rheem EcoNet
 
 Your Rheem and Ruud water heaters and thermostats in Gladys, through the
-EcoNet cloud (the EcoNet app, United States and Canada).
+EcoNet cloud (the EcoNet app, United States and Canada). Requires
+**Gladys 5.2** or later (the daily energy).
 
 > **Never tested on a real account yet.** This first version was written from
 > the open-source pyeconet library (the one of Home Assistant) and tested
@@ -18,10 +19,10 @@ with the features it reports.
 | Feature                  | What it is                                                                                                                                                                                                      |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mode                     | The modes of your unit, with their EcoNet names: off, energy saver, heat pump only, high demand, electric, gas, performance, vacation. In scenes, they are the Gladys water heater modes (see the table below). |
-| Water setpoint           | In °F, within the limits of the unit (often 110 to 140 °F).                                                                                                                                                     |
+| Water setpoint           | In °F, from the minimum of the unit up to the **maximum water setpoint** of the configuration (120 °F by default, see "Scalding and legionella").                                                               |
 | Hot water available      | 0, 33, 66 or 100 %, the tank level the app shows (units that report it).                                                                                                                                        |
 | Heating                  | 1 while the unit heats.                                                                                                                                                                                         |
-| Shut-off valve           | Open (1) or closed (0), read only, when a valve is installed. Gladys never opens nor closes it.                                                                                                                 |
+| Shut-off valve           | An opening sensor, read only, when a valve is installed: 1 closed, 0 open. Gladys never opens nor closes it.                                                                                                    |
 | Tank / compressor health | 0 to 100 %, when the unit reports it.                                                                                                                                                                           |
 | Energy per day           | kWh used each day, from the energy report of the app (electric and heat pump units that have it). Published the next day.                                                                                       |
 | Active alerts            | The number of alerts EcoNet shows for the unit (leak, fault…). Their details stay in the app.                                                                                                                   |
@@ -38,6 +39,9 @@ How the EcoNet modes become Gladys modes:
 | Electric, Gas              | Manual      |
 | Vacation                   | Away        |
 
+A unit that has both High Demand and Performance offers the first one only;
+the other is still shown as Boost when the unit is in it.
+
 **Thermostats** (each zone of a zoned system is a device):
 
 | Feature                    | What it is                                                                             |
@@ -45,25 +49,44 @@ How the EcoNet modes become Gladys modes:
 | Temperature                | The room temperature, in °F.                                                           |
 | Humidity                   | In %, when reported.                                                                   |
 | Heating / cooling setpoint | In °F; in auto mode they keep the gap (deadband) the thermostat asks for.              |
-| Mode                       | Off, heating, cooling, auto.                                                           |
+| Mode                       | Off, heating, cooling, auto. Emergency heat is shown as heating, fan only as off.      |
 | EcoNet mode                | Every mode of the thermostat, fan only and emergency heat included.                    |
 | Running                    | Idle, heating or cooling.                                                              |
 | Fan speed                  | Auto, low, medium-low, medium, medium-high, high, max (as the thermostat offers them). |
 | Fan                        | Auto or on (continuous), when the thermostat has the setting.                          |
 | Active alerts              | As for the water heaters.                                                              |
 
-Temperatures stay in °F, the unit EcoNet reports (setpoints in whole
-degrees, as the app sets them).
+In a scene, test **EcoNet mode** (not Mode) to tell fan only or emergency
+heat apart: Mode cannot show them.
+
+All the temperatures are in **°F**, the unit EcoNet reports (setpoints in
+whole degrees, as the app sets them). If the account or a unit says another
+unit, the integration says so in its status and refuses the setpoints until
+it is checked: set the EcoNet app to Fahrenheit.
 
 ## Configuration
 
 1. In the **Configuration** tab, enter the **e-mail address** and the
    **password** of your EcoNet app, then save.
-2. Use **Test the connection**: it logs in and lists your equipments.
-3. Open the **Discovery** tab and add the devices you want.
+2. Check the **maximum water setpoint** (see below).
+3. Use **Test the connection**: it logs in and lists your equipments.
+4. Open the **Discovery** tab and add the devices you want.
 
 The **Language of the feature names** applies to the devices discovered
 afterwards.
+
+## Scalding and legionella
+
+Hot water above 120 °F (49 °C) can scald in seconds, a child or an elderly
+person first. Gladys refuses any water setpoint above the **maximum water
+setpoint** of the configuration, 120 °F by default, whatever a scene or a
+voice command asks.
+
+Water kept warm but below 140 °F (60 °C) lets legionella grow in the tank.
+If you want the tank at 140 °F for that reason, raise the maximum to 140 °F
+on purpose, and have a mixing valve on the hot water. The limits of the
+unit still apply. Save the configuration again after changing it: the
+devices are published again with the new maximum.
 
 ## How it works
 
@@ -72,6 +95,10 @@ afterwards.
   changes arrive within seconds, and the commands go through it.
 - The whole account is read again every 30 minutes (every 5 minutes while
   the live link is down), and the energy of the last days every 6 hours.
+- A command is sent once the checks pass (equipment online, recent state,
+  limits), one at a time per equipment. The integration then waits up to
+  30 seconds for the equipment to report the new value; if it does not, it is
+  logged and Gladys shows the last value the equipment reported again.
 - The badge of a device says **Cloud**; with an orange dot when the live link
   is down (the states are then read every 5 minutes, and the commands are
   unavailable), **Unreachable** when EcoNet reports the unit offline or cannot
@@ -80,26 +107,32 @@ afterwards.
 ## Limits
 
 - Commands need the live link: while it is down, a command is refused with a
-  message.
+  message. They are also refused when EcoNet reports the equipment offline,
+  or when its state is older than 45 minutes.
 - A refused password is never retried by itself (to spare your account): fix
-  it and save, or press **Test the connection** once it works again.
+  it and save, or press **Test the connection** once it works again. A token
+  EcoNet refuses minutes after issuing it spaces the next logins out (5, 10,
+  20 minutes… up to 6 hours); when only the live link refuses it, the live
+  link waits 30 minutes (then longer) without a new login.
+- When EcoNet asks to slow down (HTTP 429), nothing is sent for what it asks,
+  15 minutes at least.
 - Not supported yet: away/vacation scheduling, the schedule resume, water
   usage, the Wi-Fi signal, the dehumidifier setpoint, the detail of the
   alerts. The gas units do not get the energy feature (EcoNet reports kBTU).
-- The water setpoint is limited by the unit only: above 120 °F, hot water can
-  scald. Think about it before writing scenes.
 
 ## Privacy
 
 Your e-mail address and password are sent to EcoNet only (HTTPS), the token
-EcoNet returns stays in memory and nothing is written to disk. The password
-and the token never appear in the logs.
+EcoNet returns stays in memory and nothing is written to disk. The password,
+the token and the e-mail address never appear in the logs.
 
 ## Troubleshooting
 
 - "EcoNet refused the e-mail or the password": check them in the EcoNet app.
 - "the live updates are down": the integration tries again (10 s, then
   longer, 5 minutes at most). The states keep coming every 5 minutes.
+- "Scald risk": the setpoint is above the maximum water setpoint of the
+  configuration.
 - A feature missing: the device is built from what the unit reported when it
   was discovered. Delete the device and scan again after a firmware update.
 
