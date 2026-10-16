@@ -1,67 +1,114 @@
-# Template de démonstration
+# Rheem EcoNet
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Vos chauffe-eau et thermostats Rheem et Ruud dans Gladys, par le cloud EcoNet
+(l'application EcoNet, États-Unis et Canada).
+
+> **Jamais testé sur un vrai compte pour l'instant.** Cette première version
+> a été écrite à partir de la bibliothèque libre pyeconet (celle de Home
+> Assistant) et testée uniquement sur ses réponses d'exemple. Vos retours sur
+> le forum sont les bienvenus. Non officiel, sans lien avec Rheem.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Chaque équipement de votre compte EcoNet est proposé dans l'onglet
+**Découverte**, avec les fonctionnalités qu'il remonte.
+
+**Chauffe-eau** (pompe à chaleur, électriques, gaz, instantanés) :
+
+| Fonctionnalité                   | Ce que c'est                                                                                                                                                                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode                             | Les modes de votre appareil, avec leurs noms EcoNet : arrêt, économie d'énergie, pompe à chaleur seule, forte demande, électrique, gaz, performance, vacances. Dans les scènes, ce sont les modes chauffe-eau de Gladys (voir le tableau plus bas). |
+| Consigne de l'eau                | En °F, dans les limites de l'appareil (souvent 110 à 140 °F).                                                                                                                                                                                       |
+| Eau chaude disponible            | 0, 33, 66 ou 100 %, le niveau du ballon affiché par l'application (appareils qui le remontent).                                                                                                                                                     |
+| Chauffe                          | 1 quand l'appareil chauffe.                                                                                                                                                                                                                         |
+| Vanne d'arrêt                    | Ouverte (1) ou fermée (0), en lecture seule, quand une vanne est installée. Gladys ne l'ouvre ni ne la ferme jamais.                                                                                                                                |
+| État de la cuve / du compresseur | 0 à 100 %, quand l'appareil le remonte.                                                                                                                                                                                                             |
+| Énergie par jour                 | Les kWh consommés chaque jour, d'après le rapport d'énergie de l'application (appareils électriques et pompes à chaleur qui l'ont). Publiée le lendemain.                                                                                           |
+| Alertes actives                  | Le nombre d'alertes qu'EcoNet affiche pour l'appareil (fuite, défaut…). Leur détail reste dans l'application.                                                                                                                                       |
+
+Correspondance des modes EcoNet avec les modes de Gladys :
+
+| EcoNet                          | Mode Gladys |
+| ------------------------------- | ----------- |
+| Off                             | Arrêt       |
+| Energy Saver (pompe à chaleur)  | Auto        |
+| Energy Saver (autres appareils) | Éco         |
+| Heat Pump Only                  | Éco         |
+| High Demand, Performance        | Boost       |
+| Electric, Gas                   | Manuel      |
+| Vacation                        | Absence     |
+
+**Thermostats** (chaque zone d'un système multizone est un appareil) :
+
+| Fonctionnalité                         | Ce que c'est                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------- |
+| Température                            | La température de la pièce, en °F.                                                    |
+| Humidité                               | En %, quand elle est remontée.                                                        |
+| Consignes de chauffage / climatisation | En °F ; en mode auto elles gardent l'écart (zone neutre) que demande le thermostat.   |
+| Mode                                   | Arrêt, chauffage, climatisation, auto.                                                |
+| Mode EcoNet                            | Tous les modes du thermostat, ventilation seule et chauffage d'appoint compris.       |
+| Fonctionnement                         | Au repos, chauffe ou climatise.                                                       |
+| Vitesse de ventilation                 | Auto, basse, moyenne-basse, moyenne, moyenne-haute, haute, max (selon le thermostat). |
+| Ventilation                            | Auto ou marche (continue), quand le thermostat a ce réglage.                          |
+| Alertes actives                        | Comme pour les chauffe-eau.                                                           |
+
+Les températures restent en °F, l'unité qu'EcoNet remonte (consignes en
+degrés entiers, comme l'application les règle).
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+1. Dans l'onglet **Configuration**, saisissez l'**adresse e-mail** et le
+   **mot de passe** de votre application EcoNet, puis enregistrez.
+2. Utilisez **Tester la connexion** : il se connecte et liste vos équipements.
+3. Ouvrez l'onglet **Découverte** et ajoutez les appareils voulus.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+La **langue des noms de fonctionnalités** s'applique aux appareils découverts
+ensuite.
 
-## Actions
+## Fonctionnement
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+- Au démarrage, l'intégration se connecte, lit la liste des équipements du
+  compte et ouvre le lien en direct (MQTT sur TLS, celui de l'application
+  EcoNet) : les changements arrivent en quelques secondes, et les commandes
+  passent par lui.
+- Tout le compte est relu toutes les 30 minutes (toutes les 5 minutes quand
+  le lien en direct est coupé), et l'énergie des derniers jours toutes les
+  6 heures.
+- Le badge d'un appareil indique **Cloud** ; avec un point orange quand le
+  lien en direct est coupé (les états sont alors lus toutes les 5 minutes et
+  les commandes indisponibles), **Injoignable** quand EcoNet signale
+  l'appareil hors ligne ou ne répond pas.
 
-## Scènes
+## Limites
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+- Les commandes ont besoin du lien en direct : quand il est coupé, une
+  commande est refusée avec un message.
+- Un mot de passe refusé n'est jamais retenté tout seul (pour ménager votre
+  compte) : corrigez-le puis enregistrez, ou appuyez sur **Tester la
+  connexion** quand il fonctionne à nouveau.
+- Pas encore pris en charge : l'absence et les vacances programmées, la
+  reprise du programme, la consommation d'eau, le signal Wi-Fi, la consigne
+  du déshumidificateur, le détail des alertes. Les appareils au gaz n'ont pas
+  la fonctionnalité d'énergie (EcoNet la donne en kBTU).
+- La consigne de l'eau n'est limitée que par l'appareil : au-delà de 120 °F
+  (49 °C), l'eau chaude peut brûler. Pensez-y avant d'écrire des scènes.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Confidentialité
 
-## Tableau de bord
-
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+Votre adresse e-mail et votre mot de passe ne sont envoyés qu'à EcoNet
+(HTTPS), le jeton qu'EcoNet renvoie reste en mémoire et rien n'est écrit sur
+le disque. Le mot de passe et le jeton n'apparaissent jamais dans les logs.
 
 ## Dépannage
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- « EcoNet a refusé l'e-mail ou le mot de passe » : vérifiez-les dans
+  l'application EcoNet.
+- « les mises à jour en direct sont coupées » : l'intégration réessaie (10 s,
+  puis plus longtemps, 5 minutes au plus). Les états continuent d'arriver
+  toutes les 5 minutes.
+- Une fonctionnalité manque : l'appareil est construit d'après ce que
+  l'équipement remontait à sa découverte. Supprimez l'appareil et relancez
+  une découverte après une mise à jour du micrologiciel.
+
+Rheem, Ruud et EcoNet sont des marques de leurs propriétaires respectifs.
+Cette intégration est non officielle et sans lien avec Rheem.

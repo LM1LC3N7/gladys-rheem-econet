@@ -1,240 +1,272 @@
+// -----------------------------------------------------------------------------
+// The Gladys devices of the EcoNet equipments, their states and the payloads
+// of the commands (pure), on pyeconet's example answers.
+// -----------------------------------------------------------------------------
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DEVICE_FEATURE_CATEGORIES,
-  DEVICE_FEATURE_TYPES,
-  DEVICE_POLL_FREQUENCIES,
-  DEVICE_TRANSPORTS,
-} from '@gladysassistant/integration-sdk';
-import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import {
-  DEVICE_BLUEPRINTS,
-  buildDiscoveredDevices,
-  buildTransportEntries,
-  createPoller,
-  findBlueprintByDevice,
-  identifyDevice,
-} from '../src/devices/index.js';
-import { simulateLanSession } from '../src/devices/plug.js';
-import { normalizeConfig } from '../src/config.js';
+import { buildDevice, modeValues, payloadOf, statesOf, UnsupportedError } from '../src/devices.js';
+import { equipmentsOf } from '../src/equipment.js';
+import { IDS, locations } from './fixtures/econet.js';
 
-const gladys = createFakeGladys();
-const config = normalizeConfig();
+const gladys = {
+  externalIds: (type, id) => ({
+    device: `ext:test:${type}:${id}`,
+    feature: (key) => `ext:test:${type}:${id}:${key}`,
+  }),
+};
+const all = () => equipmentsOf(locations()).equipments;
+const bySerial = (id) => all().find((e) => e.serial === id.serial);
+const keys = (device) => device.features.map((f) => f.external_id.split(':').at(-1));
+const feature = (device, key) => device.features.find((f) => f.external_id.endsWith(`:${key}`));
 
-test('every blueprint exposes the required shape', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    assert.equal(typeof bp.key, 'string', 'key must be a string');
-    assert.equal(typeof bp.deviceExternalId, 'function', 'deviceExternalId must be a function');
-    assert.equal(typeof bp.buildDevice, 'function', 'buildDevice must be a function');
-  }
-});
+/**
+ * The units the Gladys core accepts (server/utils/constants.js,
+ * DEVICE_FEATURE_UNITS_BY_CATEGORY and …_BY_CATEGORY_AND_TYPE), for the
+ * categories this integration uses. `null`: no unit.
+ */
+const CORE_UNITS = {
+  'water-heater': {
+    mode: [null],
+    'target-temperature': ['celsius', 'fahrenheit'],
+    'remaining-hot-water': ['percent', 'liter'],
+    heating: [null],
+  },
+  thermostat: {
+    'target-temperature': ['celsius', 'fahrenheit'],
+    mode: [null],
+    'operating-state': [null],
+  },
+  'temperature-sensor': { '*': ['celsius', 'fahrenheit', 'kelvin'] },
+  'humidity-sensor': { '*': ['percent'] },
+  maintenance: { '*': ['percent'] },
+  'energy-sensor': { '*': ['watt-hour', 'kilowatt-hour', 'megawatt-hour'] },
+  'air-conditioning': { 'fan-speed': [null] },
+  switch: { binary: [null] },
+  text: { select: [null] },
+  'counter-sensor': { '*': [null] },
+};
 
-test('buildDiscoveredDevices returns one payload per blueprint', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  assert.equal(devices.length, DEVICE_BLUEPRINTS.length);
-  for (const device of devices) {
-    assert.equal(typeof device.name, 'string');
-    assert.ok(device.external_id, 'each device has an external_id');
-    assert.ok(Array.isArray(device.features) && device.features.length > 0);
-  }
-});
-
-test('Gladys accepts the discovery payload', async () => {
-  // The SDK fake checks the payload like the host API does: external_id
-  // prefix, known category/type/unit, poll_frequency... A refusal is a 400
-  // for the WHOLE list, so no device would show up in the Discovery tab.
-  const fresh = createFakeGladys();
-  await fresh.publishDiscoveredDevices(buildDiscoveredDevices(fresh, config));
-  assert.equal(fresh.fake.discoveredDevices.length, DEVICE_BLUEPRINTS.length);
-});
-
-test('Gladys polls exactly the devices that implement onPoll', () => {
-  const frequencies = Object.values(DEVICE_POLL_FREQUENCIES);
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const device = bp.buildDevice(gladys, config);
-    if (typeof bp.onPoll === 'function') {
-      assert.equal(device.should_poll, true, `${bp.key}: without should_poll, never polled`);
-      assert.ok(frequencies.includes(device.poll_frequency), `${bp.key}: invalid poll_frequency`);
-    } else {
-      assert.notEqual(device.should_poll, true, `${bp.key}: polled for nothing`);
+test('every feature uses a unit the core accepts for its category and type', () => {
+  for (const equipment of all()) {
+    for (const f of buildDevice(gladys, equipment, 'en').features) {
+      const allowed = CORE_UNITS[f.category]?.[f.type] ?? CORE_UNITS[f.category]?.['*'];
+      assert.ok(allowed, `${f.external_id}: ${f.category}/${f.type} not expected`);
+      assert.ok(allowed.includes(f.unit ?? null), `${f.external_id}: unit ${f.unit}`);
     }
   }
 });
 
-test('the poller reads a device at the refresh interval of the config', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const pollDevice = createPoller();
-  const plug = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(fresh),
-  };
-  const everyFiveMinutes = normalizeConfig({ poll_frequency: 300 });
-
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'the first poll reads');
-  for (let minute = 1; minute < 5; minute += 1) {
-    t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-    assert.equal(
-      await pollDevice(fresh, plug, everyFiveMinutes),
-      false,
-      `skipped at ${minute} min`,
-    );
-  }
-  // Gladys' tick may land a little early: the read is still due.
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES - 50);
-  assert.equal(await pollDevice(fresh, plug, everyFiveMinutes), true, 'read again at 5 min');
-});
-
-test('the poller retries a failed read at the next poll', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const pollDevice = createPoller();
-  const station = {
-    external_id: DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-      gladys,
-    ),
-  };
-  t.mock.method(globalThis, 'fetch', async () => {
-    throw new Error('network down');
-  });
-  await assert.rejects(pollDevice(gladys, station, config), /network down/);
-
-  globalThis.fetch.mock.mockImplementation(async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
-  }));
-  t.mock.timers.tick(DEVICE_POLL_FREQUENCIES.EVERY_MINUTES);
-  assert.equal(await pollDevice(gladys, station, config), true, 'not delayed by the failure');
-  assert.equal(gladys.fake.lastState(`${station.external_id}:temperature`), 21.4);
-});
-
-test('the poller ignores a device that has nothing to poll', async () => {
-  const pollDevice = createPoller();
-  const switchId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'switch').deviceExternalId(gladys);
-  assert.equal(await pollDevice(gladys, { external_id: switchId }, config), false);
-  assert.equal(await pollDevice(gladys, { external_id: 'does-not-exist' }, config), false);
-});
-
-test('an idle plug publishes its 0 W once, then only as a heartbeat', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'] });
-  const fresh = createFakeGladys();
-  const plug = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug');
-  await plug.onPoll(fresh, config);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 1, 'an unchanged value is not sent again');
-  t.mock.timers.tick(30 * 60 * 1000);
-  await plug.onPoll(fresh, config);
-  assert.equal(fresh.fake.states.length, 2, 're-sent after 30 minutes');
-});
-
-test('device external_ids are unique across the catalog', () => {
-  const devices = buildDiscoveredDevices(gladys, config);
-  const ids = devices.map((d) => d.external_id);
-  assert.equal(new Set(ids).size, ids.length, 'no two devices may share an external_id');
-});
-
-test('findBlueprintByDevice routes an external_id back to its owner blueprint', () => {
-  for (const bp of DEVICE_BLUEPRINTS) {
-    const external_id = bp.deviceExternalId(gladys);
-    const found = findBlueprintByDevice(gladys, { external_id });
-    assert.equal(found, bp);
-  }
-});
-
-test('findBlueprintByDevice returns undefined for an unknown device', () => {
-  const found = findBlueprintByDevice(gladys, { external_id: 'does-not-exist' });
-  assert.equal(found, undefined);
-});
-
-test('manifest action keys are unique across blueprints', () => {
-  const keys = DEVICE_BLUEPRINTS.flatMap((bp) => Object.keys(bp.actions ?? {}));
-  assert.equal(new Set(keys).size, keys.length, 'no two blueprints may register the same action');
-});
-
-test('the camera declares a camera/image feature', () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const device = cameraBlueprint.buildDevice(gladys, config);
-  const imageFeature = device.features.find((f) => f.category === DEVICE_FEATURE_CATEGORIES.CAMERA);
-  assert.ok(imageFeature, 'the camera must carry a camera feature');
-  assert.equal(imageFeature.type, DEVICE_FEATURE_TYPES.CAMERA.IMAGE);
-  assert.equal(imageFeature.read_only, true);
-});
-
-test('onGetImage resolves a base64 JPEG under the 150 KB limit', async () => {
-  const cameraBlueprint = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'camera');
-  const image = await cameraBlueprint.onGetImage(gladys, {
-    device: { external_id: cameraBlueprint.deviceExternalId(gladys) },
-    config,
-  });
-  assert.match(image, /^image\/jpg;base64,/);
-  assert.ok(image.length <= 150 * 1024, 'the image must stay under 150 KB');
-});
-
-test('buildTransportEntries reports one valid entry per dual-channel device', () => {
-  const entries = buildTransportEntries(gladys, config);
-  assert.ok(entries.length > 0, 'the demo plug reports its transport');
-  const validValues = Object.values(DEVICE_TRANSPORTS);
-  for (const entry of entries) {
-    assert.ok(entry.external_id, 'each entry targets a device external_id');
-    assert.ok(validValues.includes(entry.transport), `invalid transport: ${entry.transport}`);
-  }
-});
-
-test('the demo plug honors the GLADYS_PREFER_LOCAL preference', () => {
-  const local = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-  const cloud = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: false }));
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  assert.equal(local.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.LOCAL);
-  assert.equal(cloud.find((e) => e.external_id === plugId).transport, DEVICE_TRANSPORTS.CLOUD);
-});
-
-test('nominal transport entries never carry a leftover degraded flag', () => {
-  const entries = buildTransportEntries(gladys, config);
-  for (const entry of entries) {
-    assert.equal(entry.degraded, undefined, 'nominal entries must clear the degraded state');
-  }
-});
-
-test('the plug reports a degraded cloud fallback when the LAN session is refused', () => {
-  const plugId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'plug').deviceExternalId(gladys);
-  simulateLanSession(false);
-  try {
-    const entries = buildTransportEntries(gladys, normalizeConfig({ GLADYS_PREFER_LOCAL: true }));
-    const entry = entries.find((e) => e.external_id === plugId);
-    assert.equal(entry.transport, DEVICE_TRANSPORTS.CLOUD, 'falls back to cloud');
-    assert.equal(entry.degraded, true, 'the fallback is flagged degraded');
-    assert.ok(entry.message.en, 'the reason carries at least the mandatory `en` text');
-    assert.ok(entry.message.en.length <= 200, 'tooltip messages are capped at 200 characters');
-  } finally {
-    simulateLanSession(true);
-  }
-});
-
-test('identifyDevice signals a device that implements identify', async () => {
-  const lightId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'light').deviceExternalId(gladys);
-  const message = await identifyDevice(gladys, lightId, config);
-  assert.match(message.en, /signalling/);
-  assert.ok(message.fr, 'the message is multi-language');
-});
-
-test('identifyDevice explains when the device has no way to signal itself', async () => {
-  const weatherId = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station').deviceExternalId(
-    gladys,
+test('a heat pump water heater (gen4)', () => {
+  const device = buildDevice(gladys, bySerial(IDS.gen4), 'fr');
+  assert.equal(device.external_id, 'ext:test:water-heater:q0320gen4');
+  assert.equal(device.name, 'Water Heater');
+  assert.equal(device.model, 'heatpumpWaterHeaterGen4');
+  assert.deepEqual(keys(device), [
+    'mode',
+    'target-temperature',
+    'heating',
+    'energy-daily',
+    'alerts',
+  ]);
+  const mode = feature(device, 'mode');
+  assert.deepEqual(
+    mode.supported_options.map((o) => [o.value, o.label]),
+    [
+      [0, 'Arrêt'],
+      [1, 'Économie d’énergie'],
+      [2, 'Pompe à chaleur seule'],
+      [3, 'Forte demande'],
+      [4, 'Électrique'],
+    ],
   );
-  const message = await identifyDevice(gladys, weatherId, config);
-  assert.match(message.en, /no way to signal/);
+  const setpoint = feature(device, 'target-temperature');
+  assert.deepEqual([setpoint.unit, setpoint.min, setpoint.max], ['fahrenheit', 110, 140]);
+  assert.equal(setpoint.read_only, false);
+  assert.equal(feature(device, 'heating').read_only, true);
+  assert.equal(feature(device, 'energy-daily').type, 'daily-consumption');
+  assert.deepEqual(statesOf(bySerial(IDS.gen4)), [
+    ['mode', { state: 1 }],
+    ['target-temperature', { state: 132 }],
+    ['heating', { state: 1 }],
+    ['alerts', { state: 0 }],
+  ]);
 });
 
-test('the test_weather action returns a multi-language message', async () => {
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ current: { temperature_2m: 21.4, relative_humidity_2m: 55 } }),
-  });
-  try {
-    const weatherStation = DEVICE_BLUEPRINTS.find((bp) => bp.key === 'weather-station');
-    const message = await weatherStation.actions.test_weather(gladys, { fields: {}, config });
-    assert.match(message.en, /21\.4/);
-    assert.match(message.fr, /21\.4/);
-  } finally {
-    globalThis.fetch = realFetch;
-  }
+test('a gen5 heat pump: hot water, health, valve not installed, vacation', () => {
+  const equipment = bySerial(IDS.gen5);
+  const device = buildDevice(gladys, equipment, 'en');
+  assert.deepEqual(keys(device), [
+    'mode',
+    'target-temperature',
+    'remaining-hot-water',
+    'heating',
+    'tank-health',
+    'compressor-health',
+    'energy-daily',
+    'alerts',
+  ]);
+  assert.deepEqual(
+    modeValues(equipment.info).map((m) => [m.mode, m.value]),
+    [
+      ['OFF', 0],
+      ['ENERGY_SAVING', 1],
+      ['HEAT_PUMP_ONLY', 2],
+      ['HIGH_DEMAND', 3],
+      ['ELECTRIC', 4],
+      ['VACATION', 5],
+    ],
+  );
+  const states = Object.fromEntries(statesOf(equipment));
+  assert.deepEqual(states.mode, { state: 3 });
+  assert.deepEqual(states['remaining-hot-water'], { state: 100 });
+  assert.deepEqual(states['tank-health'], { state: 100 });
+  assert.deepEqual(states['compressor-health'], { state: 100 });
+  // A valve that reports itself installed gets a read-only feature.
+  const withValve = {
+    ...equipment,
+    info: { ...equipment.info, '@VALVESTATUS': { title: 'Shut-OFF Valve - Closed', value: 0 } },
+  };
+  const valve = feature(buildDevice(gladys, withValve, 'en'), 'shutoff-valve');
+  assert.equal(valve.read_only, true);
+  assert.deepEqual(Object.fromEntries(statesOf(withValve))['shutoff-valve'], { state: 0 });
+});
+
+test('a plain electric tank: Energy Saver is ECO, Performance is BOOST, off through @ENABLED', () => {
+  const equipment = bySerial(IDS.legacy);
+  assert.deepEqual(
+    modeValues(equipment.info).map((m) => [m.mode, m.value]),
+    [
+      ['ENERGY_SAVING', 2],
+      ['PERFORMANCE', 3],
+      ['OFF', 0],
+    ],
+  );
+  const device = buildDevice(gladys, equipment, 'en');
+  assert.ok(!keys(device).includes('energy-daily'), 'no energy report in its actions');
+  assert.deepEqual(payloadOf(equipment, 'mode', 0), { '@ENABLED': 0 });
+  assert.deepEqual(payloadOf(equipment, 'mode', 3), { '@ENABLED': 1, '@MODE': 1 });
+  assert.throws(() => payloadOf(equipment, 'mode', 5), UnsupportedError);
+});
+
+test('a gas water heater without modes: setpoint only', () => {
+  const equipment = bySerial(IDS.gas);
+  assert.deepEqual(keys(buildDevice(gladys, equipment, 'en')), [
+    'target-temperature',
+    'heating',
+    'alerts',
+  ]);
+  assert.throws(() => payloadOf(equipment, 'mode', 4), /no mode/);
+});
+
+test('water heater commands are checked against the unit', () => {
+  const equipment = bySerial(IDS.gen4);
+  assert.deepEqual(payloadOf(equipment, 'target-temperature', 120.4), { '@SETPOINT': 120 });
+  assert.throws(() => payloadOf(equipment, 'target-temperature', 150), /between 110 and 140/);
+  assert.throws(() => payloadOf(equipment, 'target-temperature', 'hot'), /number/);
+  assert.deepEqual(payloadOf(equipment, 'mode', 2), { '@MODE': 2 });
+  assert.throws(() => payloadOf(equipment, 'heating', 1), /cannot be controlled/);
+  assert.throws(() => payloadOf(equipment, 'alerts', 0), /cannot be controlled/);
+});
+
+test('a thermostat', () => {
+  const equipment = bySerial(IDS.hvac);
+  const device = buildDevice(gladys, equipment, 'en');
+  assert.equal(device.external_id, 'ext:test:thermostat:q0320hvac');
+  assert.deepEqual(keys(device), [
+    'temperature',
+    'humidity',
+    'heat-setpoint',
+    'cool-setpoint',
+    'thermostat-mode',
+    'system-mode',
+    'operating-state',
+    'fan-speed',
+    'alerts',
+  ]);
+  assert.deepEqual(
+    feature(device, 'thermostat-mode').supported_options.map((o) => [o.value, o.label]),
+    [
+      [1, 'Heating'],
+      [2, 'Cooling'],
+      [3, 'Auto'],
+      [0, 'Off'],
+    ],
+  );
+  assert.deepEqual(
+    feature(device, 'system-mode').supported_options.map((o) => o.value),
+    ['heating', 'cooling', 'auto', 'fan-only', 'off', 'emergency-heat'],
+  );
+  assert.deepEqual(
+    feature(device, 'fan-speed').supported_options.map((o) => o.value),
+    [0, 1, 2, 3, 4, 5],
+  );
+  const heat = feature(device, 'heat-setpoint');
+  assert.deepEqual(
+    [heat.category, heat.unit, heat.min, heat.max],
+    ['thermostat', 'fahrenheit', 50, 90],
+  );
+  assert.deepEqual(statesOf(equipment), [
+    ['temperature', { state: 72 }],
+    ['humidity', { state: 48 }],
+    ['heat-setpoint', { state: 68 }],
+    ['cool-setpoint', { state: 70 }],
+    ['thermostat-mode', { state: 1 }],
+    ['system-mode', { text: 'heating' }],
+    ['operating-state', { state: 0 }],
+    ['fan-speed', { state: 0 }],
+    ['alerts', { state: 0 }],
+  ]);
+  // Emergency heat and fan only have no Gladys mode: heating and off are shown.
+  const emergency = {
+    ...equipment,
+    info: { ...equipment.info, '@MODE': { ...equipment.info['@MODE'], value: 5 } },
+  };
+  const states = Object.fromEntries(statesOf(emergency));
+  assert.deepEqual(states['thermostat-mode'], { state: 1 });
+  assert.deepEqual(states['system-mode'], { text: 'emergency-heat' });
+});
+
+test('thermostat commands', () => {
+  const equipment = bySerial(IDS.hvac);
+  assert.deepEqual(payloadOf(equipment, 'heat-setpoint', 66), { '@HEATSETPOINT': 66 });
+  assert.throws(() => payloadOf(equipment, 'heat-setpoint', 95), /between 50 and 90/);
+  assert.deepEqual(payloadOf(equipment, 'cool-setpoint', 76), { '@COOLSETPOINT': 76 });
+  assert.deepEqual(payloadOf(equipment, 'thermostat-mode', 2), { '@MODE': 1 });
+  assert.deepEqual(payloadOf(equipment, 'thermostat-mode', 0), { '@MODE': 4 });
+  assert.deepEqual(payloadOf(equipment, 'system-mode', 'fan-only'), { '@MODE': 3 });
+  assert.throws(() => payloadOf(equipment, 'system-mode', 'turbo'), /no mode/);
+  assert.deepEqual(payloadOf(equipment, 'fan-speed', 4), { '@FANSPEED': 4 });
+  assert.throws(() => payloadOf(equipment, 'fan-speed', 7), /no fan speed/);
+  assert.throws(() => payloadOf(equipment, 'fan-mode', 'on'), /no fan mode/);
+  assert.throws(() => payloadOf(equipment, 'temperature', 70), /cannot be controlled/);
+  // In auto mode the setpoints keep the deadband (2 °F) between them.
+  const auto = {
+    ...equipment,
+    info: { ...equipment.info, '@MODE': { ...equipment.info['@MODE'], value: 2 } },
+  };
+  assert.throws(() => payloadOf(auto, 'heat-setpoint', 69), /2 °F under the cooling one/);
+  assert.deepEqual(payloadOf(auto, 'heat-setpoint', 68), { '@HEATSETPOINT': 68 });
+  assert.throws(() => payloadOf(auto, 'cool-setpoint', 69), /2 °F above the heating one/);
+});
+
+test('fan mode select when the thermostat has one', () => {
+  const equipment = bySerial(IDS.hvac);
+  const withFan = {
+    ...equipment,
+    info: {
+      ...equipment.info,
+      '@FANMODE': { constraints: { enumText: ['Auto', 'On Continuous'] }, value: 1 },
+    },
+  };
+  const device = buildDevice(gladys, withFan, 'fr');
+  assert.deepEqual(
+    feature(device, 'fan-mode').supported_options.map((o) => [o.value, o.label]),
+    [
+      ['auto', 'Auto'],
+      ['on', 'Marche (continue)'],
+    ],
+  );
+  assert.deepEqual(Object.fromEntries(statesOf(withFan))['fan-mode'], { text: 'on' });
+  assert.deepEqual(payloadOf(withFan, 'fan-mode', 'auto'), { '@FANMODE': 0 });
 });
