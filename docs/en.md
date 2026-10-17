@@ -85,8 +85,10 @@ voice command asks.
 Water kept warm but below 140 °F (60 °C) lets legionella grow in the tank.
 If you want the tank at 140 °F for that reason, raise the maximum to 140 °F
 on purpose, and have a mixing valve on the hot water. The limits of the
-unit still apply. Save the configuration again after changing it: the
-devices are published again with the new maximum.
+unit still apply. The new cap applies to the commands as soon as the
+configuration is saved. The slider of a device already created only changes
+after a click on **Update** for that device in the **Discovery** tab; until
+then, a setpoint above the cap is still refused.
 
 ## How it works
 

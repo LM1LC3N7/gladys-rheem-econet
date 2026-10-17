@@ -373,6 +373,9 @@ export function enumOptions(field, parse) {
   return options;
 }
 
+/** A unit text meaning °F: "deg F", "F", "Fahrenheit" (the account's display unit too). */
+export const FAHRENHEIT = /\bF\b|fahrenheit/i;
+
 /**
  * Whether the temperature fields declare a unit other than °F
  * (`constraints.units`, "deg F" in every example); false when none says.
@@ -380,7 +383,7 @@ export function enumOptions(field, parse) {
 export function notFahrenheit(info) {
   return ['@SETPOINT', '@HEATSETPOINT', '@COOLSETPOINT'].some((key) => {
     const units = info[key]?.constraints?.units;
-    return typeof units === 'string' && units.trim() !== '' && !/\bF\b|fahrenheit/i.test(units);
+    return typeof units === 'string' && units.trim() !== '' && !FAHRENHEIT.test(units);
   });
 }
 

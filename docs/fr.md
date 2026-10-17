@@ -87,8 +87,10 @@ Une eau gardée tiède, sous 140 °F (60 °C), laisse la légionelle se
 développer dans le ballon. Si vous voulez le ballon à 140 °F pour cette
 raison, relevez le maximum à 140 °F en connaissance de cause, avec un
 mitigeur sur l'eau chaude. Les limites de l'appareil s'appliquent toujours.
-Enregistrez la configuration après l'avoir changée : les appareils sont
-republiés avec le nouveau maximum.
+Le nouveau plafond s'applique aux commandes dès que la configuration est
+enregistrée. Le curseur d'un appareil déjà créé, lui, ne change qu'après un
+clic sur **Mettre à jour** pour cet appareil dans l'onglet **Découverte** ;
+d'ici là, une consigne au-dessus du plafond reste refusée.
 
 ## Fonctionnement
 

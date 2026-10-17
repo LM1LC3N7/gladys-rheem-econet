@@ -139,13 +139,17 @@ test('states reach Gladys once the devices are created; only "reported" changes 
 });
 
 test('commands: desired topic, unique transaction ids, one at a time per equipment', async (t) => {
-  const { gladys, mqtt } = await setup(t);
+  const { gladys, mqtt, advance } = await setup(t);
   await createAll(gladys);
-  const [a, b] = await Promise.all([
-    set(gladys, WH(IDS.gen4), 'target-temperature', 118),
-    set(gladys, WH(IDS.gen4), 'mode', 2),
-  ]);
-  assert.equal(a.success && b.success, true);
+  const a = await set(gladys, WH(IDS.gen4), 'target-temperature', 118);
+  assert.equal(a.success, true, 'Gladys gets its answer once the command is sent');
+  // The next command of the same equipment waits for the report of the first.
+  const pending = set(gladys, WH(IDS.gen4), 'mode', 2);
+  await settle();
+  assert.equal(mqtt.published.length, 1);
+  mqtt.send(update(IDS.gen4, { '@SETPOINT': 118 }));
+  const b = await pending;
+  assert.equal(b.success, true);
   const [first, second] = mqtt.published;
   assert.equal(first.topic, DESIRED);
   assert.equal(first.message.device_name, IDS.gen4.deviceName);
@@ -154,6 +158,15 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
   assert.equal(second.message['@MODE'], 2);
   assert.match(first.message.transactionId, /^ANDROID_2026-10-16T18:00:\d\d\.\d{3}_\d+$/);
   assert.notEqual(first.message.transactionId, second.message.transactionId);
+  // Never reported: the queue is released after 30 s.
+  const third = set(gladys, WH(IDS.gen4), 'mode', 4);
+  await advance(TIMINGS.commandConfirm - 2000);
+  assert.equal(mqtt.published.length, 2);
+  await advance(3000);
+  assert.equal((await third).success, true);
+  assert.equal(mqtt.published.length, 3);
+  assert.equal(mqtt.published[2].message['@MODE'], 4);
+  mqtt.published.splice(2, 1);
   await set(gladys, WH(IDS.gen5), 'mode', 0);
   assert.deepEqual(
     { enabled: mqtt.published[2].message['@ENABLED'], mode: mqtt.published[2].message['@MODE'] },
@@ -161,7 +174,9 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
   );
   await set(gladys, HVAC(IDS.hvac), 'fan-speed', 5);
   assert.equal(mqtt.published[3].message['@FANSPEED'], 5);
-  // Out of range: refused with a message, nothing sent.
+  // Out of range: refused with a message, nothing sent (the queue of gen4 is
+  // free once its last mode is reported).
+  mqtt.send(update(IDS.gen4, { '@MODE': { value: 4 } }));
   const refused = await set(gladys, WH(IDS.gen4), 'target-temperature', 105);
   assert.equal(refused.success, false);
   assert.match(refused.error, /between 110 and 140/);

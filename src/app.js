@@ -16,7 +16,14 @@ import { normalizeConfig } from './config.js';
 import { FEATURES, LIMITS, TIMINGS } from './constants.js';
 import { buildDevice, hasEnergy, idsOf, modeReport, payloadOf, statesOf } from './devices.js';
 import { EcoNetClient, EcoNetError, errorReason } from './econet.js';
-import { KINDS, equipmentsOf, mergeUpdate, nameOf, notFahrenheit } from './equipment.js';
+import {
+  FAHRENHEIT,
+  KINDS,
+  equipmentsOf,
+  mergeUpdate,
+  nameOf,
+  notFahrenheit,
+} from './equipment.js';
 import { T } from './i18n.js';
 import { LiveLink, jittered } from './live.js';
 import { StatePublisher } from './publisher.js';
@@ -185,6 +192,13 @@ export class EcoNetApp {
     this.publisher.stop();
     this.publisher.clear();
     this.client = null;
+    // The timers are gone: release the commands still waiting for a report.
+    for (const entry of this.entries.values()) {
+      for (const waiter of entry.waiters) {
+        waiter.resolve();
+      }
+      entry.waiters.clear();
+    }
     this.entries.clear();
     this.routes.clear();
     this.devicesKey = undefined;
@@ -341,7 +355,7 @@ export class EcoNetApp {
   /** °F is assumed everywhere: anything else is logged, shown, and setpoints are refused. */
   checkUnit() {
     const unit = this.client?.displayUnit;
-    const accountOther = typeof unit === 'string' && !/^f/i.test(unit);
+    const accountOther = typeof unit === 'string' && !FAHRENHEIT.test(unit);
     const equipmentOther = [...this.entries.values()].some((e) => notFahrenheit(e.equipment.info));
     this.unitIssue = accountOther || equipmentOther;
     if (this.unitIssue) {
@@ -454,6 +468,7 @@ export class EcoNetApp {
       if (confirms(entry.equipment.info, waiter.payload)) {
         entry.waiters.delete(waiter);
         this.cancel(waiter.name);
+        waiter.resolve();
       }
     }
   }
@@ -676,16 +691,20 @@ export class EcoNetApp {
 
   // --- Commands ----------------------------------------------------------------------
 
-  /** One command at a time per equipment: the checks and the sending of the next wait. */
+  /**
+   * One command at a time per equipment: the next one waits until the
+   * equipment reported the previous one (or its 30 s ran out). Gladys gets
+   * its answer as soon as a command is sent.
+   */
   setValue(device, feature, value) {
     const route = this.routes.get(feature?.external_id);
     if (!route) {
       return Promise.reject(new Error('unknown EcoNet feature: scan the equipments again'));
     }
     const { entry, key } = route;
-    const run = entry.chain.catch(() => {}).then(() => this.command(entry, key, value));
-    entry.chain = run.catch(() => {});
-    return run;
+    const run = entry.chain.then(() => this.command(entry, key, value));
+    entry.chain = run.then(({ confirmed }) => confirmed).catch(() => {});
+    return run.then(() => undefined);
   }
 
   async command(entry, key, value) {
@@ -705,31 +724,40 @@ export class EcoNetApp {
     });
     await this.live.publish(entry.equipment, payload);
     this.logger.info(`"${nameOf(entry.equipment)}": ${key} sent (${JSON.stringify(payload)})`);
-    this.awaitConfirmation(entry, key, payload);
+    // Wrapped, not awaited: the queue of the equipment waits for it, Gladys does not.
+    return { confirmed: this.awaitConfirmation(entry, key, payload) };
   }
 
   /**
    * Waits (30 s) for the equipment to report the values sent. Not confirmed:
    * logged, and the last reported state is published again, so Gladys does
    * not keep showing a value the equipment never took.
+   * @returns {Promise<void>} settled once confirmed or after the 30 s
    */
   awaitConfirmation(entry, key, payload) {
     if (confirms(entry.equipment.info, payload)) {
-      return;
+      return Promise.resolve();
     }
     this.commands += 1;
-    const waiter = { payload, name: `confirm:${entry.equipment.serial}:${this.commands}` };
-    entry.waiters.add(waiter);
-    this.schedule(waiter.name, TIMINGS.commandConfirm, () => {
-      if (!entry.waiters.delete(waiter)) {
-        return;
-      }
-      this.logger.warn(
-        `"${nameOf(entry.equipment)}": ${key} not confirmed by the equipment within ${TIMINGS.commandConfirm / 1000} s`,
-      );
-      this.gladys.forgetPublishedStates(entry.ids.device);
-      this.publisher.forget(entry.ids.device);
-      this.pushStates(entry);
+    return new Promise((resolve) => {
+      const waiter = {
+        payload,
+        name: `confirm:${entry.equipment.serial}:${this.commands}`,
+        resolve,
+      };
+      entry.waiters.add(waiter);
+      this.schedule(waiter.name, TIMINGS.commandConfirm, () => {
+        resolve();
+        if (!entry.waiters.delete(waiter)) {
+          return;
+        }
+        this.logger.warn(
+          `"${nameOf(entry.equipment)}": ${key} not confirmed by the equipment within ${TIMINGS.commandConfirm / 1000} s`,
+        );
+        this.gladys.forgetPublishedStates(entry.ids.device);
+        this.publisher.forget(entry.ids.device);
+        this.pushStates(entry);
+      });
     });
   }
 
