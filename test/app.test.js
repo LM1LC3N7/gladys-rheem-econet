@@ -158,15 +158,18 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
   assert.equal(second.message['@MODE'], 2);
   assert.match(first.message.transactionId, /^ANDROID_2026-10-16T18:00:\d\d\.\d{3}_\d+$/);
   assert.notEqual(first.message.transactionId, second.message.transactionId);
-  // Never reported: the queue is released after 30 s.
+  // The second is never reported: a third one waits 3.5 s at most (Gladys
+  // awaits the ack 5 s), then is refused at once, nothing sent.
   const third = set(gladys, WH(IDS.gen4), 'mode', 4);
-  await advance(TIMINGS.commandConfirm - 2000);
-  assert.equal(mqtt.published.length, 2);
   await advance(3000);
-  assert.equal((await third).success, true);
-  assert.equal(mqtt.published.length, 3);
-  assert.equal(mqtt.published[2].message['@MODE'], 4);
-  mqtt.published.splice(2, 1);
+  assert.equal(mqtt.published.length, 2);
+  await advance(1000);
+  const busy = await third;
+  assert.equal(busy.success, false);
+  assert.match(busy.error, /previous command of this equipment is still being confirmed/);
+  assert.match(busy.error, /réessayez dans quelques secondes/);
+  assert.equal(mqtt.published.length, 2);
+  // Another equipment is not held back.
   await set(gladys, WH(IDS.gen5), 'mode', 0);
   assert.deepEqual(
     { enabled: mqtt.published[2].message['@ENABLED'], mode: mqtt.published[2].message['@MODE'] },
@@ -176,7 +179,7 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
   assert.equal(mqtt.published[3].message['@FANSPEED'], 5);
   // Out of range: refused with a message, nothing sent (the queue of gen4 is
   // free once its last mode is reported).
-  mqtt.send(update(IDS.gen4, { '@MODE': { value: 4 } }));
+  mqtt.send(update(IDS.gen4, { '@MODE': { value: 2 } }));
   const refused = await set(gladys, WH(IDS.gen4), 'target-temperature', 105);
   assert.equal(refused.success, false);
   assert.match(refused.error, /between 110 and 140/);

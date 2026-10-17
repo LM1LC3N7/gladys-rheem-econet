@@ -693,18 +693,55 @@ export class EcoNetApp {
 
   /**
    * One command at a time per equipment: the next one waits until the
-   * equipment reported the previous one (or its 30 s ran out). Gladys gets
-   * its answer as soon as a command is sent.
+   * equipment reported the previous one (or its 30 s ran out), but only
+   * `maxWait` (3.5 s: Gladys awaits a set_value ack 5 s); past that it is
+   * refused at once, nothing sent. Gladys gets its answer as soon as a
+   * command is sent. A caller with a longer timeout (a scene action, 25 s,
+   * TIMINGS.commandQueueWaitScene) passes its own `maxWait`.
    */
-  setValue(device, feature, value) {
+  async setValue(device, feature, value, { maxWait = TIMINGS.commandQueueWait } = {}) {
     const route = this.routes.get(feature?.external_id);
     if (!route) {
-      return Promise.reject(new Error('unknown EcoNet feature: scan the equipments again'));
+      throw new Error('unknown EcoNet feature: scan the equipments again');
     }
     const { entry, key } = route;
-    const run = entry.chain.then(() => this.command(entry, key, value));
-    entry.chain = run.then(({ confirmed }) => confirmed).catch(() => {});
-    return run.then(() => undefined);
+    const previous = entry.chain;
+    let release;
+    const mine = new Promise((resolve) => {
+      release = resolve;
+    });
+    // The next command waits for the previous one and for this one.
+    entry.chain = previous.then(() => mine);
+    try {
+      if (!(await this.within(previous, maxWait))) {
+        throw new Error(
+          'the previous command of this equipment is still being confirmed: try again in a few seconds / ' +
+            'la commande précédente de cet équipement est en cours de confirmation : réessayez dans quelques secondes',
+        );
+      }
+      const { confirmed } = await this.command(entry, key, value);
+      confirmed.then(release);
+    } catch (err) {
+      release();
+      throw err;
+    }
+  }
+
+  /** Whether `promise` settles within `ms`. */
+  within(promise, ms) {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = this.timers.setTimeout(() => {
+        done = true;
+        resolve(false);
+      }, ms);
+      promise.then(() => {
+        if (!done) {
+          this.timers.clearTimeout(timer);
+          resolve(true);
+        }
+      });
+    });
   }
 
   async command(entry, key, value) {

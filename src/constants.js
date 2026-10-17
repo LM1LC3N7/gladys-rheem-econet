@@ -117,6 +117,13 @@ export const TIMINGS = {
   commandConfirm: 30_000,
   /** A command is refused when the state of the equipment is older than this. */
   stateMaxAge: 45 * 60_000,
+  /**
+   * How long a command waits for the previous one of its equipment to be
+   * confirmed before it is refused: Gladys awaits a set_value ack 5 s…
+   */
+  commandQueueWait: 3500,
+  /** …and a scene action longer (for a caller that passes it). */
+  commandQueueWaitScene: 25_000,
   /** Random spread of the retry delays (±25 %). */
   jitter: 0.25,
   /** Delays of the retries (API and live events): doubled each time, up to the max. */

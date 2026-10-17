@@ -110,7 +110,9 @@ then, a setpoint above the cap is still refused.
 
 - Commands need the live link: while it is down, a command is refused with a
   message. They are also refused when EcoNet reports the equipment offline,
-  or when its state is older than 45 minutes.
+  or when its state is older than 45 minutes. A command arriving while the
+  previous one of the same equipment still awaits its confirmation waits
+  3.5 seconds at most, then is refused: try again a few seconds later.
 - A refused password is never retried by itself (to spare your account): fix
   it and save, or press **Test the connection** once it works again. A token
   EcoNet refuses minutes after issuing it spaces the next logins out (5, 10,

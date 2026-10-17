@@ -116,7 +116,9 @@ d'ici là, une consigne au-dessus du plafond reste refusée.
 - Les commandes ont besoin du lien en direct : quand il est coupé, une
   commande est refusée avec un message. Elles sont aussi refusées quand
   EcoNet signale l'équipement hors ligne, ou quand son état date de plus de
-  45 minutes.
+  45 minutes. Une commande qui arrive pendant que la précédente du même
+  équipement attend sa confirmation patiente 3,5 secondes au plus, puis est
+  refusée : réessayez quelques secondes plus tard.
 - Un mot de passe refusé n'est jamais retenté tout seul (pour ménager votre
   compte) : corrigez-le puis enregistrez, ou appuyez sur **Tester la
   connexion** quand il fonctionne à nouveau. Un jeton refusé quelques minutes
