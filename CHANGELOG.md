@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
 ### Added
 
 - Rheem and Ruud water heaters of the EcoNet cloud: mode (EcoNet modes mapped
@@ -42,4 +44,5 @@ the notes of the version's GitHub Release.
   login included (what EcoNet asks, 15 min at least).
 - Setpoints are refused when the account may not report °F.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-rheem-econet/releases/tag/v0.1.1
