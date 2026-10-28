@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULTS, LANGUAGES, MAX_WATER_SETPOINT } from '../src/config.js';
+import { DEFAULTS, LANGUAGES, MAX_WATER_SETPOINT, WATER_SETPOINT_HARD_MAX } from '../src/config.js';
 import { ACTIONS } from '../src/constants.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -97,10 +97,15 @@ test('the configuration matches the code', () => {
   assert.equal(fields.email.type, 'string');
   assert.equal(fields.password.type, 'secret', 'the password is never sent back to the browser');
   assert.equal(fields.email.required && fields.password.required, true);
-  // The anti-scald cap: a number, 120 °F by default, legionella explained.
+  // The anti-scald cap: a number, 149 °F (65 °C) by default and at most, legionella explained.
   const cap = fields.max_water_setpoint;
   assert.equal(cap.type, 'number');
-  assert.equal(cap.default, 120);
+  assert.deepEqual([cap.default, cap.max], [149, 149]);
+  assert.equal(cap.max, WATER_SETPOINT_HARD_MAX);
+  assert.ok(((cap.max - 32) * 5) / 9 <= 65, '149 °F is 65 °C at most');
+  assert.match(cap.label.en, /°F/);
+  assert.match(cap.description.en, /149 °F \(65 °C\)/);
+  assert.match(cap.description.fr, /149 °F \(65 °C\)/);
   assert.deepEqual([cap.min, cap.max], [MAX_WATER_SETPOINT.min, MAX_WATER_SETPOINT.max]);
   assert.match(cap.description.en, /scald.*legionella/s);
   assert.match(cap.description.fr, /brûlures.*légionelle/s);

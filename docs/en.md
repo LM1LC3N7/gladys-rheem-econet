@@ -19,7 +19,7 @@ with the features it reports.
 | Feature                  | What it is                                                                                                                                                                                                      |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mode                     | The modes of your unit, with their EcoNet names: off, energy saver, heat pump only, high demand, electric, gas, performance, vacation. In scenes, they are the Gladys water heater modes (see the table below). |
-| Water setpoint           | In °F, from the minimum of the unit up to the **maximum water setpoint** of the configuration (120 °F by default, see "Scalding and legionella").                                                               |
+| Water setpoint           | In °F, from the minimum of the unit up to the **maximum water setpoint** of the configuration (149 °F = 65 °C by default and at most, see "Scalding and legionella").                                           |
 | Hot water available      | 0, 33, 66 or 100 %, the tank level the app shows (units that report it).                                                                                                                                        |
 | Heating                  | 1 while the unit heats.                                                                                                                                                                                         |
 | Shut-off valve           | An opening sensor, read only, when a valve is installed: 1 closed, 0 open. Gladys never opens nor closes it.                                                                                                    |
@@ -79,16 +79,27 @@ afterwards.
 
 Hot water above 120 °F (49 °C) can scald in seconds, a child or an elderly
 person first. Gladys refuses any water setpoint above the **maximum water
-setpoint** of the configuration, 120 °F by default, whatever a scene or a
-voice command asks.
+setpoint** of the configuration, whatever a scene or a voice command asks:
+**149 °F (65 °C) by default, and never more than 149 °F (65 °C)**, whatever
+is typed. The setpoint stays in °F, like in the EcoNet app; 149 °F is
+exactly 65 °C, so no value Gladys writes goes above 65.0 °C.
 
-Water kept warm but below 140 °F (60 °C) lets legionella grow in the tank.
-If you want the tank at 140 °F for that reason, raise the maximum to 140 °F
-on purpose, and have a mixing valve on the hot water. The limits of the
-unit still apply. The new cap applies to the commands as soon as the
-configuration is saved. The slider of a device already created only changes
-after a click on **Update** for that device in the **Discovery** tab; until
-then, a setpoint above the cap is still refused.
+Water kept warm but below 140 °F (60 °C) lets legionella grow in the tank:
+140 °F is enough for that. To limit scalding, lower the maximum (120 °F =
+49 °C is the usual anti-scald value), or have a mixing valve on the hot
+water. The limits of the unit still apply: when the unit stops lower (often
+140 °F), its limit wins.
+
+| °F                                                                          | °C   |
+| --------------------------------------------------------------------------- | ---- |
+| 120                                                                         | 48.9 |
+| 130                                                                         | 54.4 |
+| 140                                                                         | 60   |
+| 149                                                                         | 65   |
+| The new cap applies to the commands as soon as the                          |
+| configuration is saved. The slider of a device already created only changes |
+| after a click on **Update** for that device in the **Discovery** tab; until |
+| then, a setpoint above the cap is still refused.                            |
 
 ## How it works
 
@@ -136,7 +147,7 @@ the token and the e-mail address never appear in the logs.
 - "the live updates are down": the integration tries again (10 s, then
   longer, 5 minutes at most). The states keep coming every 5 minutes.
 - "Scald risk": the setpoint is above the maximum water setpoint of the
-  configuration.
+  configuration, the limit of the unit, or 149 °F (65 °C).
 - A feature missing: the device is built from what the unit reported when it
   was discovered. Delete the device and scan again after a firmware update.
 

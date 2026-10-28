@@ -64,13 +64,13 @@
         "fr": "Consigne maximale de l'eau (°F)"
       },
       "description": {
-        "en": "Anti-scald cap: Gladys refuses any water heater setpoint above it (the limits of the unit apply too). 120 °F (49 °C) by default. Raise it to 140 °F (60 °C) if you keep the tank hot against legionella, and fit a mixing valve then.",
-        "fr": "Protection contre les brûlures : Gladys refuse toute consigne de chauffe-eau au-dessus (les limites de l'appareil s'appliquent aussi). 120 °F (49 °C) par défaut. Relevez-la à 140 °F (60 °C) si vous gardez le ballon chaud contre la légionelle, avec alors un mitigeur."
+        "en": "Anti-scald cap: Gladys refuses any water heater setpoint above it (the limits of the unit apply too, a lower one wins). 149 °F (65 °C) by default and at most, from 80 °F (27 °C): never more than 149 °F, whatever is typed. 140 °F (60 °C) is enough against legionella; lower it to 120 °F (49 °C) to limit scalding, or fit a mixing valve.",
+        "fr": "Protection contre les brûlures : Gladys refuse toute consigne de chauffe-eau au-dessus (les limites de l'appareil s'appliquent aussi, la plus basse l'emporte). 149 °F (65 °C) par défaut et au plus, à partir de 80 °F (27 °C) : jamais plus de 149 °F, quoi qu'on saisisse. 140 °F (60 °C) suffit contre la légionelle ; baissez-la à 120 °F (49 °C) pour limiter les brûlures, ou posez un mitigeur."
       },
       "required": false,
-      "default": 120,
+      "default": 149,
       "min": 80,
-      "max": 185
+      "max": 149
     },
     {
       "key": "language",

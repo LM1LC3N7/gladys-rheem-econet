@@ -10,6 +10,20 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Changed
+
+- Hot water never above 65 °C: the "Maximum water setpoint" option goes up
+  to 149 °F (65 °C) instead of 185 °F (85 °C), and its default is 149 °F
+  instead of 120 °F (49 °C). Set it to 120 °F to keep the former default.
+  The limits of the unit still apply and win when lower.
+- The scald refusal gives the °C equivalent of the cap.
+
+### Fixed
+
+- No water setpoint above 149 °F (65 °C) is ever written, whatever the
+  configuration or the unit allows: a hard ceiling checks the value that
+  leaves, rounded down for the cap.
+
 ## [0.1.2] - 2026-10-23
 
 ## [0.1.1] - 2026-10-17

@@ -88,8 +88,9 @@ test('start: login, equipment list, devices, then the live events', async (t) =>
   );
   assert.equal(featureOf(gladys, WH(IDS.gen4), 'mode').name, 'Mode');
   assert.equal(featureOf(gladys, WH(IDS.gen4), 'target-temperature').name, "Consigne de l'eau");
-  // The anti-scald cap (120 °F by default) is the maximum of the setpoint.
-  assert.equal(featureOf(gladys, WH(IDS.gen4), 'target-temperature').max, 120);
+  // The anti-scald cap (149 °F by default) is the maximum of the setpoint, the
+  // unit's own limit (140 °F) wins when lower.
+  assert.equal(featureOf(gladys, WH(IDS.gen4), 'target-temperature').max, 140);
   assert.equal(gladys.fake.connectionStatus.connected, true);
   assert.match(gladys.fake.connectionStatus.message.en, /5 equipment\(s\), live updates on/);
   // One MQTT connection: the user token and the system key, the app's client id.
@@ -187,16 +188,16 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
 });
 
 test('the anti-scald cap: above it, refused in English and French', async (t) => {
-  const { gladys, mqtt } = await setup(t);
+  const { gladys, mqtt } = await setup(t, { config: { ...CONFIG, max_water_setpoint: 120 } });
   await createAll(gladys);
   const refused = await set(gladys, WH(IDS.gen4), 'target-temperature', 125);
   assert.equal(refused.success, false);
-  assert.match(refused.error, /Scald risk: the water setpoint is limited to 120 °F/);
+  assert.match(refused.error, /Scald risk: the water setpoint is limited to 120 °F \(48\.9 °C\)/);
   assert.match(refused.error, /Risque de brûlure/);
   assert.equal(mqtt.published.length, 0);
 });
 
-test('a raised cap (legionella): 140 °F allowed, the unit limit still applies', async (t) => {
+test('a cap typed above 149 °F: 140 °F allowed, the unit limit still applies', async (t) => {
   const { gladys, mqtt } = await setup(t, { config: { ...CONFIG, max_water_setpoint: 160 } });
   await createAll(gladys);
   assert.equal(featureOf(gladys, WH(IDS.gen4), 'target-temperature').max, 140);

@@ -74,6 +74,7 @@ import {
   waterHeaterModePayload,
   waterHeaterModes,
 } from './equipment.js';
+import { celsiusOf, DEFAULTS, WATER_SETPOINT_HARD_MAX } from './config.js';
 import { texts } from './i18n.js';
 
 /** A command Gladys cannot send: the message is shown to the user. */
@@ -83,13 +84,14 @@ const fail = (message) => {
   throw new UnsupportedError(message);
 };
 
-/** The anti-scald default of `max_water_setpoint` (°F). */
-export const DEFAULT_MAX_WATER_SETPOINT = 120;
+/** The anti-scald default of `max_water_setpoint` (°F): 149 °F = 65 °C. */
+export const DEFAULT_MAX_WATER_SETPOINT = DEFAULTS.max_water_setpoint;
 
 /**
  * The highest water setpoint Gladys may write: the `max_water_setpoint` of
- * the configuration (else the scald warning the unit reports, else 120 °F),
- * kept within the limits of the unit.
+ * the configuration (else the scald warning the unit reports, else 149 °F),
+ * kept within the limits of the unit, never above 149 °F (65 °C), rounded
+ * down. A lower limit of the unit always wins.
  */
 export function waterSetpointCap(info, configured) {
   const field = info['@SETPOINT'];
@@ -102,9 +104,11 @@ export function waterSetpointCap(info, configured) {
     : warnings.length > 0
       ? Math.min(...warnings)
       : DEFAULT_MAX_WATER_SETPOINT;
+  const max = Math.max(limits.min, Math.min(Math.floor(limits.max), Math.floor(wanted)));
   return {
     min: limits.min,
-    max: Math.max(limits.min, Math.min(limits.max, Math.round(wanted))),
+    // A unit whose floor is above 149 °F gets max < min: every write refused.
+    max: Math.min(WATER_SETPOINT_HARD_MAX, max),
   };
 }
 
@@ -569,6 +573,21 @@ function setpoint(field, value, what) {
   return rounded;
 }
 
+/** °C of a °F value for the texts, one decimal (149 °F -> 65, 120 °F -> 48.9). */
+const celsiusText = (fahrenheit) => String(Math.round(celsiusOf(fahrenheit) * 10) / 10);
+
+/** The anti-scald refusal, in English and French. */
+function scaldMessage(cap) {
+  const c = celsiusText(cap);
+  const top = WATER_SETPOINT_HARD_MAX;
+  const tc = celsiusText(top);
+  return cap < top
+    ? `Scald risk: the water setpoint is limited to ${cap} °F (${c} °C). Raise "Maximum water setpoint" in the configuration to go higher (${top} °F = ${tc} °C at most). / ` +
+        `Risque de brûlure : la consigne de l'eau est limitée à ${cap} °F (${c} °C). Relevez « Consigne maximale de l'eau » dans la configuration pour aller plus haut (${top} °F = ${tc} °C au plus).`
+    : `Scald risk: the water setpoint is limited to ${cap} °F (${c} °C); Gladys never sets more. / ` +
+        `Risque de brûlure : la consigne de l'eau est limitée à ${cap} °F (${c} °C) ; Gladys ne règle jamais plus.`;
+}
+
 /**
  * The EcoNet payload of a Gladys command ({ "@SETPOINT": 120 }…), checked
  * against what the equipment reports now. Throws UnsupportedError with a
@@ -600,13 +619,17 @@ export function payloadOf(equipment, key, value, { maxWaterSetpoint, fahrenheit 
       case FEATURES.SETPOINT: {
         const wanted = Number(value);
         const cap = waterSetpointCap(info, maxWaterSetpoint).max;
+        const scald = () => fail(scaldMessage(cap));
         if (Number.isFinite(wanted) && Math.round(wanted) > cap) {
-          fail(
-            `Scald risk: the water setpoint is limited to ${cap} °F. Raise "Maximum water setpoint" in the configuration to go higher. / ` +
-              `Risque de brûlure : la consigne de l'eau est limitée à ${cap} °F. Relevez « Consigne maximale de l'eau » dans la configuration pour aller plus haut.`,
-          );
+          scald();
         }
-        return { '@SETPOINT': setpoint(info['@SETPOINT'], value, 'water setpoint') };
+        const written = setpoint(info['@SETPOINT'], value, 'water setpoint');
+        // Last check on the value that leaves: never above the cap, 149 °F,
+        // nor 65.0 °C once converted.
+        if (written > cap || written > WATER_SETPOINT_HARD_MAX || celsiusOf(written) > 65) {
+          scald();
+        }
+        return { '@SETPOINT': written };
       }
       default:
         return fail(`${key} cannot be controlled`);

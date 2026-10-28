@@ -116,12 +116,16 @@ up to date at the end of every milestone.
   category, never reachable by "turn everything off"; the water-valve
   category has no open/closed type.
 - **Anti-scald cap `max_water_setpoint`** (review, blocking): a number in °F,
-  80–185, 120 by default (49 °C, the usual anti-scald value); without a
-  usable value, the scald warning the unit reports
-  (`@SETPOINT.constraints.warning[].value`), else 120; always kept within the
-  unit limits. It is the `max` of the setpoint feature, and any higher
-  setpoint is refused with an English + French message. The docs explain
-  legionella: raise it to 140 °F on purpose, with a mixing valve.
+  80–149, 149 by default (65 °C, Louis's rule of 2026-10-28: hot water never
+  written above 65 °C, 65 °C by default; it was 80–185, 120 by default);
+  without a usable value, the scald warning the unit reports
+  (`@SETPOINT.constraints.warning[].value`), else 149; always kept within the
+  unit limits (a lower one wins), rounded down, never above 149 °F
+  (`WATER_SETPOINT_HARD_MAX`, exactly 65 °C). It is the `max` of the setpoint
+  feature, and any higher setpoint is refused with an English + French
+  message giving the °C equivalent. The value written is checked once more
+  (cap, 149 °F, 65 °C after conversion). The unit stays °F for the user; the
+  docs give the °C table and explain legionella (140 °F is enough).
 - **Gladys 5.2** minimum: `publishEnergyConsumption`.
 - **Commands need the live link** (they are MQTT messages): refused with a
   message while it is down. Serialized per equipment (checks and sending);

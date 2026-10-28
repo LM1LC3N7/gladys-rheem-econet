@@ -14,7 +14,7 @@ import {
   UnsupportedError,
   waterSetpointCap,
 } from '../src/devices.js';
-import { equipmentsOf } from '../src/equipment.js';
+import { equipmentsOf, numberOf } from '../src/equipment.js';
 import { IDS, locations } from './fixtures/econet.js';
 
 const gladys = {
@@ -176,7 +176,7 @@ test('the anti-scald cap of the water setpoint', () => {
   assert.deepEqual(waterSetpointCap(info, 160), { min: 110, max: 140 });
   assert.deepEqual(waterSetpointCap(info, 100), { min: 110, max: 110 });
   const noWarning = { ...info, '@SETPOINT': { constraints: { lowerLimit: 90, upperLimit: 150 } } };
-  assert.deepEqual(waterSetpointCap(noWarning, undefined), { min: 90, max: 120 });
+  assert.deepEqual(waterSetpointCap(noWarning, undefined), { min: 90, max: 149 });
   // The feature offers the cap as its maximum.
   const device = buildDevice(gladys, bySerial(IDS.gen4), 'en', { maxWaterSetpoint: 120 });
   assert.equal(feature(device, 'target-temperature').max, 120);
@@ -340,4 +340,76 @@ test('fan mode select when the thermostat has one', () => {
   );
   assert.deepEqual(Object.fromEntries(statesOf(withFan))['fan-mode'], { text: 'on' });
   assert.deepEqual(payloadOf(withFan, 'fan-mode', 'auto'), { '@FANMODE': 0 });
+});
+
+test('hot water never written above 149 °F (65 °C); a lower unit limit wins', () => {
+  const gen4 = bySerial(IDS.gen4); // limits 110–140
+  // A unit that would accept up to 185 °F (85 °C), no scald warning.
+  const wide = {
+    ...gen4,
+    info: {
+      ...gen4.info,
+      '@SETPOINT': { value: 120, constraints: { lowerLimit: 80, upperLimit: 185 } },
+    },
+  };
+  const write = (equipment, value, options) =>
+    payloadOf(equipment, 'target-temperature', value, options)['@SETPOINT'];
+  // The default cap (149 °F) and the hard ceiling.
+  assert.deepEqual(waterSetpointCap(wide.info, 149), { min: 80, max: 149 });
+  assert.deepEqual(waterSetpointCap(wide.info, 185), { min: 80, max: 149 });
+  assert.deepEqual(waterSetpointCap(wide.info, 1e9), { min: 80, max: 149 });
+  assert.deepEqual(waterSetpointCap(wide.info, 148.7), { min: 80, max: 148 }, 'rounded down');
+  const warned = { constraints: { lowerLimit: 80, upperLimit: 185, warning: [{ value: 170 }] } };
+  assert.deepEqual(waterSetpointCap({ '@SETPOINT': warned }, undefined), { min: 80, max: 149 });
+  // 149 °F (65.0 °C) passes; above, refused, whatever the cap given.
+  assert.equal(write(wide, 149, { maxWaterSetpoint: 149 }), 149);
+  assert.equal(write(wide, 149.4, { maxWaterSetpoint: 149 }), 149);
+  assert.equal(write(wide, 149), 149, 'no cap given: 149 °F');
+  for (const value of [149.5, 150, 160, 185]) {
+    assert.throws(
+      () => payloadOf(wide, 'target-temperature', value, { maxWaterSetpoint: 185 }),
+      /limited to 149 °F \(65 °C\); Gladys never sets more/,
+      `${value} °F`,
+    );
+  }
+  // The value read back from the unit (set higher in the app) is never resent.
+  const high = {
+    ...wide,
+    info: { ...wide.info, '@SETPOINT': { ...wide.info['@SETPOINT'], value: 160 } },
+  };
+  assert.throws(
+    () => payloadOf(high, 'target-temperature', numberOf(high.info['@SETPOINT']), {}),
+    /limited to 149 °F/,
+  );
+  // A lower ceiling of the configuration, and a lower limit of the unit, win.
+  assert.equal(write(wide, 130, { maxWaterSetpoint: 130 }), 130);
+  assert.throws(
+    () => write(wide, 131, { maxWaterSetpoint: 130 }),
+    /limited to 130 °F \(54\.4 °C\)/,
+  );
+  assert.equal(write(gen4, 140, { maxWaterSetpoint: 149 }), 140);
+  assert.throws(() => write(gen4, 145, { maxWaterSetpoint: 149 }), /limited to 140 °F/);
+  // Every value that leaves is 65.0 °C at most once converted.
+  for (let f = 80; f <= 185; f += 0.5) {
+    let sent;
+    try {
+      sent = write(wide, f, { maxWaterSetpoint: 185 });
+    } catch {
+      continue;
+    }
+    assert.ok(sent <= 149 && ((sent - 32) * 5) / 9 <= 65, `${f} °F sent as ${sent}`);
+  }
+  // A unit whose floor is above 149 °F: nothing can be written.
+  const hotFloor = {
+    ...gen4,
+    info: {
+      ...gen4.info,
+      '@SETPOINT': { value: 155, constraints: { lowerLimit: 150, upperLimit: 185 } },
+    },
+  };
+  assert.throws(() => write(hotFloor, 150), /limited to 149 °F/);
+  // The feature offers the cap as its maximum.
+  const device = buildDevice(gladys, wide, 'en', { maxWaterSetpoint: 185 });
+  assert.equal(feature(device, 'target-temperature').max, 149);
+  assert.equal(feature(device, 'target-temperature').unit, 'fahrenheit');
 });

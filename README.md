@@ -14,7 +14,7 @@ User documentation: [English](docs/en.md) · [Français](docs/fr.md).
 
 - **Water heaters**: mode (EcoNet modes mapped to the Gladys water heater
   modes), water setpoint (°F, capped by the anti-scald `max_water_setpoint`,
-  120 °F by default), hot water available, heating, shut-off valve (read-only
+  149 °F = 65 °C by default and at most, a lower unit limit wins), hot water available, heating, shut-off valve (read-only
   opening sensor), tank and compressor health, energy per day (kWh), active
   alerts.
 - **Thermostats** (and each zone of a zoned system): temperature, humidity,

@@ -19,7 +19,7 @@ Chaque équipement de votre compte EcoNet est proposé dans l'onglet
 | Fonctionnalité                   | Ce que c'est                                                                                                                                                                                                                                        |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mode                             | Les modes de votre appareil, avec leurs noms EcoNet : arrêt, économie d'énergie, pompe à chaleur seule, forte demande, électrique, gaz, performance, vacances. Dans les scènes, ce sont les modes chauffe-eau de Gladys (voir le tableau plus bas). |
-| Consigne de l'eau                | En °F, du minimum de l'appareil jusqu'à la **consigne maximale de l'eau** de la configuration (120 °F par défaut, voir « Brûlures et légionelle »).                                                                                                 |
+| Consigne de l'eau                | En °F, du minimum de l'appareil jusqu'à la **consigne maximale de l'eau** de la configuration (149 °F = 65 °C par défaut et au plus, voir « Brûlures et légionelle »).                                                                              |
 | Eau chaude disponible            | 0, 33, 66 ou 100 %, le niveau du ballon affiché par l'application (appareils qui le remontent).                                                                                                                                                     |
 | Chauffe                          | 1 quand l'appareil chauffe.                                                                                                                                                                                                                         |
 | Vanne d'arrêt                    | Un capteur d'ouverture, en lecture seule, quand une vanne est installée : 1 fermée, 0 ouverte. Gladys ne l'ouvre ni ne la ferme jamais.                                                                                                             |
@@ -80,13 +80,26 @@ ensuite.
 
 Au-delà de 120 °F (49 °C), l'eau chaude peut brûler en quelques secondes, un
 enfant ou une personne âgée en premier. Gladys refuse toute consigne de l'eau
-au-dessus de la **consigne maximale de l'eau** de la configuration, 120 °F
-par défaut, quoi que demande une scène ou une commande vocale.
+au-dessus de la **consigne maximale de l'eau** de la configuration, quoi que
+demande une scène ou une commande vocale : **149 °F (65 °C) par défaut, et
+jamais plus de 149 °F (65 °C)**, quoi qu'on saisisse. La consigne reste en
+°F, comme dans l'application EcoNet ; 149 °F valent exactement 65 °C, donc
+aucune valeur écrite par Gladys ne dépasse 65,0 °C.
 
 Une eau gardée tiède, sous 140 °F (60 °C), laisse la légionelle se
-développer dans le ballon. Si vous voulez le ballon à 140 °F pour cette
-raison, relevez le maximum à 140 °F en connaissance de cause, avec un
-mitigeur sur l'eau chaude. Les limites de l'appareil s'appliquent toujours.
+développer dans le ballon : 140 °F suffisent pour cela. Pour limiter les
+brûlures, baissez le maximum (120 °F = 49 °C, la valeur anti-brûlure
+habituelle), ou posez un mitigeur sur l'eau chaude. Les limites de
+l'appareil s'appliquent toujours : quand l'appareil s'arrête plus bas
+(souvent 140 °F), sa limite l'emporte.
+
+| °F  | °C   |
+| --- | ---- |
+| 120 | 48,9 |
+| 130 | 54,4 |
+| 140 | 60   |
+| 149 | 65   |
+
 Le nouveau plafond s'applique aux commandes dès que la configuration est
 enregistrée. Le curseur d'un appareil déjà créé, lui, ne change qu'après un
 clic sur **Mettre à jour** pour cet appareil dans l'onglet **Découverte** ;
@@ -147,7 +160,7 @@ jamais dans les logs.
   puis plus longtemps, 5 minutes au plus). Les états continuent d'arriver
   toutes les 5 minutes.
 - « Risque de brûlure » : la consigne dépasse la consigne maximale de l'eau
-  de la configuration.
+  de la configuration, la limite de l'appareil, ou 149 °F (65 °C).
 - Une fonctionnalité manque : l'appareil est construit d'après ce que
   l'équipement remontait à sa découverte. Supprimez l'appareil et relancez
   une découverte après une mise à jour du micrologiciel.

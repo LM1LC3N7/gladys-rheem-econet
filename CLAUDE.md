@@ -65,10 +65,12 @@ test/helpers/       fake EcoNet cloud and MQTT broker
   frozen too: scenes store them.
 - Manifest keys are frozen: `email`, `password`, `max_water_setpoint`,
   `language`, `test_connection`. Gladys 5.2 minimum (`publishEnergyConsumption`).
-- **Scalding**: no water setpoint above `max_water_setpoint` (120 °F by
-  default, bounded by the unit limits, see `waterSetpointCap` in devices.js)
-  may ever be sent, whatever the caller; it is also the `max` of the feature.
-  Never raise the default: the user does it on purpose (legionella, 140 °F).
+- **Scalding**: no water setpoint above `max_water_setpoint` (149 °F = 65 °C
+  by default and at most, Louis's rule of 2026-10-28; bounded by the unit
+  limits, see `waterSetpointCap` in devices.js) may ever be sent, whatever
+  the caller; it is also the `max` of the feature. `WATER_SETPOINT_HARD_MAX`
+  (149 °F, src/config.js) is never raised: 150 °F is already 65.6 °C.
+  `payloadOf` checks the written value once more (cap, 149 °F, 65 °C).
   `test/devices.test.js`, `test/app.test.js` and `test/manifest.test.js`
   hold it.
 - Value conventions: the Gladys side uses the core enums of
