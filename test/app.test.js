@@ -188,7 +188,10 @@ test('commands: desired topic, unique transaction ids, one at a time per equipme
 });
 
 test('the anti-scald cap: above it, refused in English and French', async (t) => {
-  const { gladys, mqtt } = await setup(t, { config: { ...CONFIG, max_water_setpoint: 120 } });
+  const { gladys, mqtt, lines } = await setup(t, {
+    config: { ...CONFIG, max_water_setpoint: 120 },
+  });
+  assert.ok(!lines.some((l) => /Maximum water setpoint/.test(l)), 'nothing to say under 149 °F');
   await createAll(gladys);
   const refused = await set(gladys, WH(IDS.gen4), 'target-temperature', 125);
   assert.equal(refused.success, false);
@@ -198,7 +201,15 @@ test('the anti-scald cap: above it, refused in English and French', async (t) =>
 });
 
 test('a cap typed above 149 °F: 140 °F allowed, the unit limit still applies', async (t) => {
-  const { gladys, mqtt } = await setup(t, { config: { ...CONFIG, max_water_setpoint: 160 } });
+  const { gladys, mqtt, lines } = await setup(t, {
+    config: { ...CONFIG, max_water_setpoint: 160 },
+  });
+  // The old value brought back to 149 °F is said in the log.
+  assert.ok(
+    lines.some((l) =>
+      /Maximum water setpoint 160 °F is above 149 °F \(65 °C\): 149 °F is used/.test(l),
+    ),
+  );
   await createAll(gladys);
   assert.equal(featureOf(gladys, WH(IDS.gen4), 'target-temperature').max, 140);
   assert.equal((await set(gladys, WH(IDS.gen4), 'target-temperature', 140)).success, true);

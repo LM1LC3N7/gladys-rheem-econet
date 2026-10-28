@@ -90,16 +90,22 @@ Water kept warm but below 140 °F (60 °C) lets legionella grow in the tank:
 water. The limits of the unit still apply: when the unit stops lower (often
 140 °F), its limit wins.
 
-| °F                                                                          | °C   |
-| --------------------------------------------------------------------------- | ---- |
-| 120                                                                         | 48.9 |
-| 130                                                                         | 54.4 |
-| 140                                                                         | 60   |
-| 149                                                                         | 65   |
-| The new cap applies to the commands as soon as the                          |
-| configuration is saved. The slider of a device already created only changes |
-| after a click on **Update** for that device in the **Discovery** tab; until |
-| then, a setpoint above the cap is still refused.                            |
+| °F  | °C   |
+| --- | ---- |
+| 120 | 48.9 |
+| 130 | 54.4 |
+| 140 | 60   |
+| 149 | 65   |
+
+The new cap applies to the commands as soon as the configuration is saved.
+The slider of a device already created only changes after a click on
+**Update** for that device in the **Discovery** tab; until then, a setpoint
+above the cap is still refused.
+
+A maximum saved above 149 °F by an earlier version (up to 185 °F was
+allowed) counts as 149 °F, and the log says so; lower it to 149 °F or less
+to save the configuration form again. Under the minimum of the unit, Gladys
+can only set that minimum.
 
 ## How it works
 

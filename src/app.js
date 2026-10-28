@@ -12,7 +12,7 @@
 // -----------------------------------------------------------------------------
 
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
-import { normalizeConfig } from './config.js';
+import { normalizeConfig, WATER_SETPOINT_HARD_MAX } from './config.js';
 import { FEATURES, LIMITS, TIMINGS } from './constants.js';
 import { buildDevice, hasEnergy, idsOf, modeReport, payloadOf, statesOf } from './devices.js';
 import { EcoNetClient, EcoNetError, errorReason } from './econet.js';
@@ -136,6 +136,17 @@ export class EcoNetApp {
     this.config = config;
     this.configKey = key;
     this.rawConfig = raw;
+    // A cap saved before 0.1.3 (up to 185 °F) counts as 149 °F (65 °C): say so.
+    const typed = Number(raw?.max_water_setpoint);
+    if (
+      raw?.max_water_setpoint !== '' &&
+      Number.isFinite(typed) &&
+      typed > WATER_SETPOINT_HARD_MAX
+    ) {
+      this.logger.warn(
+        `Maximum water setpoint ${typed} °F is above ${WATER_SETPOINT_HARD_MAX} °F (65 °C): ${config.maxWaterSetpoint} °F is used. Lower it in the configuration to save the form again.`,
+      );
+    }
     if (config.missing.length > 0) {
       await this.setStatus(false, T.notConfigured);
       return;

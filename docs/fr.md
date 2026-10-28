@@ -105,6 +105,12 @@ enregistrée. Le curseur d'un appareil déjà créé, lui, ne change qu'après u
 clic sur **Mettre à jour** pour cet appareil dans l'onglet **Découverte** ;
 d'ici là, une consigne au-dessus du plafond reste refusée.
 
+Un maximum enregistré au-dessus de 149 °F par une version précédente
+(jusqu'à 185 °F était permis) vaut 149 °F, et le journal le signale ;
+baissez-le à 149 °F ou moins pour pouvoir réenregistrer le formulaire de
+configuration. Sous le minimum de l'appareil, Gladys peut seulement régler ce
+minimum.
+
 ## Fonctionnement
 
 - Au démarrage, l'intégration se connecte, lit la liste des équipements du
