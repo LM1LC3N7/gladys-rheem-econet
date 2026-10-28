@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-28
+
 ### Changed
 
 - Hot water never above 65 °C: the "Maximum water setpoint" option goes up
@@ -62,6 +64,7 @@ the notes of the version's GitHub Release.
   login included (what EcoNet asks, 15 min at least).
 - Setpoints are refused when the account may not report °F.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-rheem-econet/releases/tag/v0.1.1
