@@ -170,3 +170,8 @@ up to date at the end of every milestone.
   be replaced for this repository; the first patch release gives 0.1.1.
 - **Duplicates**: checked by the pipeline before the batch (forum thread
   10385, store, Gladys core, GitHub), not again in this session.
+
+## Next patch (review minmax-cvc-r1, minors)
+
+- [ ] `test/helpers/coreFeature.js` (or the features test): put back the checks that supported options only have `label`, `sort_order`, `value`, and that `sort_order` is an integer (today only enforced through the core clone, not on GitHub CI).
+- [ ] The helper's `min <= max` check is stricter than the core: a water heater whose minimum is above 149 °F publishes min 150 / max 149 on purpose (`src/devices.js:107-111`); skip the check for that case or note it.
