@@ -427,6 +427,9 @@ export function buildDevice(gladys, equipment, language, { maxWaterSetpoint } = 
         ),
       );
     }
+    // The selects carry their value as text, but Gladys still needs a min and
+    // a max (not null in t_device_feature: HTTP 422 and the whole device
+    // refused otherwise): 0 and 0, like the other text/select integrations.
     if (modes.length > 0) {
       features.push(
         named(
@@ -434,6 +437,8 @@ export function buildDevice(gladys, equipment, language, { maxWaterSetpoint } = 
           command({
             category: C.TEXT,
             type: TYPES.TEXT.SELECT,
+            min: 0,
+            max: 0,
             keep_history: false,
             supported_options: options(modes, t.options.thermostatMode, (m) => SYSTEM_MODES[m]),
           }),
@@ -476,6 +481,8 @@ export function buildDevice(gladys, equipment, language, { maxWaterSetpoint } = 
           command({
             category: C.TEXT,
             type: TYPES.TEXT.SELECT,
+            min: 0,
+            max: 0,
             keep_history: false,
             supported_options: options(fanModes, t.options.fanMode, (m) => FAN_MODES[m]),
           }),

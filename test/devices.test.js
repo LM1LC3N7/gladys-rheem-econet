@@ -16,6 +16,7 @@ import {
 } from '../src/devices.js';
 import { equipmentsOf, numberOf } from '../src/equipment.js';
 import { IDS, locations } from './fixtures/econet.js';
+import { assertCoreDevice } from './helpers/coreFeature.js';
 
 const gladys = {
   externalIds: (type, id) => ({
@@ -412,4 +413,96 @@ test('hot water never written above 149 °F (65 °C); a lower unit limit wins', 
   const device = buildDevice(gladys, wide, 'en', { maxWaterSetpoint: 185 });
   assert.equal(feature(device, 'target-temperature').max, 149);
   assert.equal(feature(device, 'target-temperature').unit, 'fahrenheit');
+});
+
+// --- Every feature passes the Gladys model ------------------------------------
+// A null min or max makes Gladys answer HTTP 422 and refuse the whole device
+// when the user adds it (the system mode and fan mode lists had none up to
+// 0.1.3); the SDK's fake Gladys does not check it.
+
+/** The fields buildDevice reads, by kind; each variant keeps a subset of them. */
+const FIELDS = {
+  WH: [
+    '@MODE',
+    '@SETPOINT',
+    '@HOTWATER',
+    '@RUNNING',
+    '@VALVE',
+    '@TANK',
+    '@COMBUSTION',
+    '@ALERTCOUNT',
+  ],
+  HVAC: [
+    '@SETPOINT',
+    '@HUMIDITY',
+    '@HEATSETPOINT',
+    '@COOLSETPOINT',
+    '@MODE',
+    '@RUNNINGSTATUS',
+    '@FANSPEED',
+    '@FANMODE',
+    '@ALERTCOUNT',
+  ],
+};
+// The thermostat of pyeconet's examples has no fan mode: the variants add one
+// (pyeconet ThermostatFanMode texts), and setpoints without limits.
+const EXTRA = {
+  '@RUNNING': 'Running',
+  '@RUNNINGSTATUS': 'Heating',
+  '@FANMODE': { constraints: { enumText: ['Auto', 'On/Continuous', 'Sleep'] }, value: 0 },
+};
+
+/** Every equipment of the fixtures, then each of them with every subset of its fields. */
+function* everyEquipment() {
+  for (const equipment of all()) {
+    yield equipment;
+    const fields = FIELDS[equipment.kind];
+    for (let combo = 0; combo < 1 << fields.length; combo += 1) {
+      const info = { ...equipment.info };
+      fields.forEach((key, i) => {
+        if (combo & (1 << i)) {
+          info[key] = info[key] ?? EXTRA[key] ?? { value: 1 };
+        } else {
+          delete info[key];
+        }
+      });
+      yield { ...equipment, info };
+      if (info['@HEATSETPOINT'] || info['@COOLSETPOINT']) {
+        const bare = { ...info };
+        for (const key of ['@HEATSETPOINT', '@COOLSETPOINT']) {
+          if (bare[key]) bare[key] = { value: bare[key].value };
+        }
+        yield { ...equipment, info: bare };
+      }
+    }
+  }
+}
+
+test('every feature of every buildable equipment has what the Gladys model needs', () => {
+  const seen = new Set();
+  let devices = 0;
+  for (const equipment of everyEquipment()) {
+    for (const language of ['en', 'fr']) {
+      for (const maxWaterSetpoint of [undefined, 120, 149]) {
+        const device = buildDevice(gladys, equipment, language, { maxWaterSetpoint });
+        assertCoreDevice(device, `${equipment.serial}/${language}/${maxWaterSetpoint}`);
+        for (const key of keys(device)) seen.add(key);
+        devices += 1;
+      }
+    }
+  }
+  assert.ok(devices > 1000);
+  for (const key of ['system-mode', 'fan-mode', 'fan-speed', 'thermostat-mode', 'mode']) {
+    assert.ok(seen.has(key), `${key} built at least once`);
+  }
+});
+
+test('the system mode and fan mode lists have min 0 and max 0, like the other text/select features of Gladys', () => {
+  const hvac = bySerial(IDS.hvac);
+  const info = { ...hvac.info, '@FANMODE': EXTRA['@FANMODE'] };
+  const device = buildDevice(gladys, { ...hvac, info }, 'fr');
+  for (const key of ['system-mode', 'fan-mode']) {
+    const f = feature(device, key);
+    assert.deepEqual([f.category, f.type, f.min, f.max], ['text', 'select', 0, 0], key);
+  }
 });

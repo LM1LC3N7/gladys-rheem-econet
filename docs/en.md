@@ -156,6 +156,11 @@ the token and the e-mail address never appear in the logs.
   configuration, the limit of the unit, or 149 °F (65 °C).
 - A feature missing: the device is built from what the unit reported when it
   was discovered. Delete the device and scan again after a firmware update.
+- "HTTP 422 … t_device_feature.min cannot be null" when adding a thermostat
+  (versions 0.1.3 and earlier): Gladys refused the "EcoNet mode" or "Fan"
+  list, and with it the whole device. Update the integration, then add the
+  thermostat again from the **Discovery** tab. Gladys saved nothing of the
+  refused device: there is nothing to delete.
 
 Rheem, Ruud and EcoNet are trademarks of their respective owners. This
 integration is unofficial and not affiliated with Rheem.

@@ -73,6 +73,17 @@ up to date at the end of every milestone.
 
 ## Decisions
 
+- **The selects carry min 0 and max 0** (2026-11-03): Gladys stores
+  `min`/`max` as not null for every feature, text/select included (HTTP 422
+  and the whole device refused otherwise; the SDK fake Gladys does not check
+  it). 0/0 like toshiba-ac and most text/select integrations.
+  test/devices.test.js checks every feature of every equipment of the
+  fixtures with every subset of the fields the module reads (a fan mode added
+  to the thermostat, which pyeconet's example lacks) against the core model
+  (test/helpers/coreFeature.js; the core's own lists and
+  normalizeSupportedOptions when its clone is on the machine).
+- **SDK 0.16** (2026-11-03): no `poll_frequency` on the devices, so Gladys 5.3
+  does not poll them.
 - **Reference reused: pyeconet** (w1ll1am23/pyeconet, MIT, maintained, the
   library of the Home Assistant EcoNet integration). It cannot run in a Node
   container: its logic is ported to JavaScript (`src/econet.js`,
