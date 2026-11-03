@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-03
+
 ### Fixed
 
 - Adding a thermostat failed with "HTTP 422 … t_device_feature.min cannot be
@@ -81,7 +83,8 @@ the notes of the version's GitHub Release.
   login included (what EcoNet asks, 15 min at least).
 - Setpoints are refused when the account may not report °F.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/LM1LC3N7/gladys-rheem-econet/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/LM1LC3N7/gladys-rheem-econet/releases/tag/v0.1.1
