@@ -2,7 +2,7 @@
 
 Your Rheem and Ruud water heaters and thermostats in Gladys, through the
 EcoNet cloud (the EcoNet app, United States and Canada). Requires
-**Gladys 5.2** or later (the daily energy).
+**Gladys 5.3** or later (catalog countries; 5.2 for the daily energy).
 
 > **Never tested on a real account yet.** This first version was written from
 > the open-source pyeconet library (the one of Home Assistant) and tested

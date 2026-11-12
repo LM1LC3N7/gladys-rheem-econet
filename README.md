@@ -25,7 +25,7 @@ User documentation: [English](docs/en.md) · [Français](docs/fr.md).
   a "Test the connection" button, French and English.
 - Commands checked (online, recent state, limits), one at a time per
   equipment, confirmed by the equipment's report within 30 s.
-- Requires Gladys 5.2 or later (`publishEnergyConsumption`).
+- Requires Gladys 5.3 or later (catalog countries; 5.2 for `publishEnergyConsumption`).
 
 ## Credits
 
