@@ -1,8 +1,8 @@
 # Rheem EcoNet
 
 Vos chauffe-eau et thermostats Rheem et Ruud dans Gladys, par le cloud EcoNet
-(l'application EcoNet, États-Unis et Canada). Nécessite **Gladys 5.2** ou
-plus récent (l'énergie par jour).
+(l'application EcoNet, États-Unis et Canada). Nécessite **Gladys 5.3** ou
+plus récent (pays du catalogue ; 5.2 pour l'énergie par jour).
 
 > **Jamais testé sur un vrai compte pour l'instant.** Cette première version
 > a été écrite à partir de la bibliothèque libre pyeconet (celle de Home

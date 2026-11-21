@@ -35,7 +35,7 @@ test('the store basics', () => {
   assert.equal(manifest.type, 'device');
   assert.ok(manifest.name.length >= 3 && manifest.name.length <= 30);
   assert.match(manifest.gladys_version, /^>=\d+\.\d+\.\d+$/);
-  assert.match(manifest.gladys_version, />=5\.2\.0/, 'publishEnergyConsumption needs Gladys 5.2');
+  assert.match(manifest.gladys_version, />=5\.3\.0/, 'publishEnergyConsumption needs Gladys 5.2');
   assert.equal(manifest.docker_image, `ghcr.io/lm1lc3n7/gladys-rheem-econet:${manifest.version}`);
   assert.equal(manifest.version, JSON.parse(read('package.json')).version);
   assert.equal(manifest.version, JSON.parse(read('package-lock.json')).version);
@@ -48,7 +48,7 @@ test('the store basics', () => {
     assert.ok(docs.length >= 300, `docs/${lang}.md is too short for the store`);
     assert.match(docs, /not\s+affiliated\s+with\s+Rheem|sans\s+lien\s+avec\s+Rheem/i);
     assert.match(docs, /never\s+tested\s+on\s+a\s+real|jamais\s+testé\s+sur\s+un\s+vrai/i);
-    assert.match(docs, /Gladys 5\.2/);
+    assert.match(docs, /Gladys 5\.3/);
     assert.match(docs, /legionella|légionelle/i);
   }
 });
@@ -141,4 +141,13 @@ test('the licenses ship with the image', () => {
   assert.match(notices, /pyeconet/);
   assert.match(notices, /Copyright \(c\) 2016 William Scanlon/);
   assert.match(notices, /Permission is hereby granted, free of charge/);
+});
+
+test('the catalog countries: the United States and Canada, which needs Gladys >= 5.3.0', () => {
+  assert.deepEqual(manifest.countries, ['US', 'CA']);
+  const [major, minor] = manifest.gladys_version
+    .match(/>=\s*(\d+)\.(\d+)/)
+    .slice(1)
+    .map(Number);
+  assert.ok(major > 5 || (major === 5 && minor >= 3), 'countries needs Gladys 5.3.0');
 });

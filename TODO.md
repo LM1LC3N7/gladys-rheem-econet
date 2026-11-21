@@ -137,7 +137,8 @@ up to date at the end of every milestone.
   message giving the °C equivalent. The value written is checked once more
   (cap, 149 °F, 65 °C after conversion). The unit stays °F for the user; the
   docs give the °C table and explain legionella (140 °F is enough).
-- **Gladys 5.2** minimum: `publishEnergyConsumption`.
+- **Gladys 5.3** minimum: the catalog `countries` (`publishEnergyConsumption`
+  needs 5.2).
 - **Commands need the live link** (they are MQTT messages): refused with a
   message while it is down. Serialized per equipment (checks and sending);
   refused when EcoNet reports the equipment offline or its state is older
